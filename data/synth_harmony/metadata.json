@@ -1,0 +1,46 @@
+{
+  "dataset": "PleIAs/SYNTH",
+  "split": "train",
+  "streaming": true,
+  "num_shards": 4,
+  "shard_index": 1,
+  "max_rows": -1,
+  "metadata_fields": [
+    "synth_id",
+    "language",
+    "exercise",
+    "model",
+    "constraints",
+    "seed_license",
+    "query_seed_url"
+  ],
+  "system_message": {
+    "role": "system",
+    "content": [
+      {
+        "type": "system_content",
+        "model_identity": "You are vpMoE, a large language model trained by Veer Pareek.",
+        "reasoning_effort": "High",
+        "conversation_start_date": "2026-01-01",
+        "knowledge_cutoff": "2024-06",
+        "channel_config": {
+          "valid_channels": [
+            "analysis",
+            "commentary",
+            "final"
+          ],
+          "channel_required": true
+        }
+      }
+    ]
+  },
+  "developer_message": {
+    "role": "developer",
+    "content": [
+      {
+        "type": "developer_content",
+        "instructions": "Follow the user's request. When you provide an answer, produce both:\n- reasoning in the analysis channel\n- the user-facing answer in the final channel"
+      }
+    ]
+  }
+}

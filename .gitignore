@@ -3,6 +3,6 @@
 .uv-cache/
 
 ref/
-data/
-
 __pycache__/
+
+*.parquet
