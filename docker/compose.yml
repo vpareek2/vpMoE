@@ -1,0 +1,21 @@
+services:
+  vpmoe:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        # Override per-machine if needed:
+        #   VPMOE_BASE_IMAGE=nvcr.io/nvidia/pytorch:<tag>
+        BASE_IMAGE: ${VPMOE_BASE_IMAGE:-nvcr.io/nvidia/pytorch:25.12-py3}
+    image: vpmoe:latest
+    working_dir: /workspace/vpmoe
+    volumes:
+      - ..:/workspace/vpmoe
+      - ../data:/data
+    environment:
+      HF_HOME: /data/hf_cache
+      # NGC images can enforce GPU allowlists; DGX Spark (GB10) may require bypass.
+      NVIDIA_DISABLE_REQUIRE: '1'
+    gpus: all
+    ipc: host
+    command: ["/bin/bash"]
