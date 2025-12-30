@@ -30,7 +30,14 @@ VPMOE_BASE_IMAGE=nvcr.io/nvidia/pytorch:<tag> \
 ## Run
 
 ```bash
-docker compose -f docker/compose.yml run --rm vpmoe
+docker compose -f docker/compose.yml up -d
+docker compose -f docker/compose.yml exec vpmoe bash
+```
+
+For a one-off interactive shell (no background container):
+
+```bash
+docker compose -f docker/compose.yml run --rm vpmoe bash
 ```
 
 If you see an NGC startup error like `No supported GPU(s) detected`, the service sets `NVIDIA_DISABLE_REQUIRE=1` to bypass the container allowlist check.

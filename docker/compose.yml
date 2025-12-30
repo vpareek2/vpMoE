@@ -18,4 +18,4 @@ services:
       NVIDIA_DISABLE_REQUIRE: '1'
     gpus: all
     ipc: host
-    command: ["/bin/bash"]
+    command: ["sleep", "infinity"]

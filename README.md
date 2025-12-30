@@ -28,5 +28,12 @@ VPMOE_BASE_IMAGE=nvcr.io/nvidia/pytorch:<tag> \
 Run:
 
 ```bash
-docker compose -f docker/compose.yml run --rm vpmoe
+docker compose -f docker/compose.yml up -d
+docker compose -f docker/compose.yml exec vpmoe bash
+```
+
+One-off shell:
+
+```bash
+docker compose -f docker/compose.yml run --rm vpmoe bash
 ```
