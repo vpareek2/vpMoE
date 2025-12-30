@@ -3,6 +3,7 @@
 from megatron.core.models.gpt import GPTModel
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_decoder_block_spec,
+    get_gpt_decoder_block_spec_with_tpa,
     get_gpt_layer_local_spec,
     get_gpt_layer_with_transformer_engine_spec,
     get_gpt_layer_with_inference_spec,
@@ -44,20 +45,30 @@ def gpt_builder(args, pre_process, post_process, vp_stage=None, config=None, pg_
 
             if args.num_experts:
                 assert not (config.transformer_impl == "inference_optimized")
-                # Define the decoder block spec
-                transformer_layer_spec = get_gpt_decoder_block_spec(
-                    config,
-                    use_transformer_engine=use_te,
-                    normalization=args.normalization,
-                    qk_l2_norm=args.qk_l2_norm,
-                    vp_stage=vp_stage,
-                )
+                if config.use_tpa:
+                    transformer_layer_spec = get_gpt_decoder_block_spec_with_tpa(
+                        config,
+                        use_transformer_engine=use_te,
+                        normalization=args.normalization,
+                        qk_l2_norm=args.qk_l2_norm,
+                        vp_stage=vp_stage,
+                    )
+                else:
+                    transformer_layer_spec = get_gpt_decoder_block_spec(
+                        config,
+                        use_transformer_engine=use_te,
+                        normalization=args.normalization,
+                        qk_l2_norm=args.qk_l2_norm,
+                        vp_stage=vp_stage,
+                    )
             elif args.heterogeneous_layers_config_path is not None:
                 assert not (config.transformer_impl == "inference_optimized")
                 transformer_layer_spec = get_gpt_heterogeneous_layer_spec(config, use_te)
             else:
                 # Define the decoder layer spec
-                transformer_layer_spec = _get_transformer_layer_spec(use_te, config)
+                transformer_layer_spec = _get_transformer_layer_spec(
+                    use_te, config, vp_stage=vp_stage
+                )
         mtp_block_spec = None
         if args.mtp_num_layers is not None:
             assert not (config.transformer_impl == "inference_optimized")
@@ -67,7 +78,9 @@ def gpt_builder(args, pre_process, post_process, vp_stage=None, config=None, pg_
             ):
                 # Get the decoder layer spec explicitly if no decoder layer in the last stage,
                 # Only happens with block spec (TransformerBlockSubmodules) when using MoE.
-                transformer_layer_spec_for_mtp = _get_transformer_layer_spec(use_te, config)
+                transformer_layer_spec_for_mtp = _get_transformer_layer_spec(
+                    use_te, config, vp_stage=vp_stage
+                )
             else:
                 transformer_layer_spec_for_mtp = transformer_layer_spec
             mtp_block_spec = get_gpt_mtp_block_spec(
@@ -99,7 +112,7 @@ def gpt_builder(args, pre_process, post_process, vp_stage=None, config=None, pg_
     return model
 
 
-def _get_transformer_layer_spec(use_te, config):
+def _get_transformer_layer_spec(use_te, config, vp_stage=None):
     """Get transformer layer specification based on configuration.
 
     Args:
@@ -111,6 +124,14 @@ def _get_transformer_layer_spec(use_te, config):
         transformer_layer_spec: The transformer layer specification
     """
     args = get_args()
+    if config.use_tpa:
+        return get_gpt_decoder_block_spec_with_tpa(
+            config,
+            use_transformer_engine=use_te,
+            normalization=args.normalization,
+            qk_l2_norm=args.qk_l2_norm,
+            vp_stage=vp_stage,
+        )
     if use_te:
         return get_gpt_layer_with_transformer_engine_spec(
             args.num_experts,

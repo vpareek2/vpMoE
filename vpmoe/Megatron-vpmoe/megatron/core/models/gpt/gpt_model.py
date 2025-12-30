@@ -13,6 +13,7 @@ from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.common.embeddings import YarnRotaryEmbedding
 from megatron.core.models.common.embeddings.language_model_embedding import LanguageModelEmbedding
 from megatron.core.models.common.embeddings.rotary_pos_embedding import (
+    GrapeMRotaryEmbedding,
     MultimodalRotaryEmbedding,
     RotaryEmbedding,
 )
@@ -59,8 +60,8 @@ class GPTModel(LanguageModule):
             parallel ranks. Defaults to True.
         share_embeddings_and_output_weights (bool, optional):
             When True, input embeddings and output logit weights are shared. Defaults to False.
-        position_embedding_type (Literal[learned_absolute,rope], optional):
-            Position embedding type.. Defaults to 'learned_absolute'.
+        position_embedding_type (Literal[learned_absolute,rope,grapem], optional):
+            Position embedding type. Defaults to 'learned_absolute'.
         rotary_percent (float, optional):
             Percent of rotary dimension to use for rotary position embeddings.
             Ignored unless position_embedding_type is 'rope'. Defaults to 1.0.
@@ -91,7 +92,7 @@ class GPTModel(LanguageModule):
         parallel_output: bool = True,
         share_embeddings_and_output_weights: bool = False,
         position_embedding_type: Literal[
-            'learned_absolute', 'rope', 'mrope', 'yarn', 'none'
+            'learned_absolute', 'rope', 'grapem', 'mrope', 'yarn', 'none'
         ] = 'learned_absolute',
         rotary_percent: float = 1.0,
         rotary_base: int = 10000,
@@ -160,6 +161,22 @@ class GPTModel(LanguageModule):
                 rope_scaling_factor=rope_scaling_factor,
                 use_cpu_initialization=self.config.use_cpu_initialization,
                 cp_group=self.pg_collection.cp,
+            )
+        elif self.position_embedding_type == 'grapem' and not self.config.multi_latent_attention:
+            if self.config.apply_rope_fusion:
+                raise ValueError("GRAPE-M does not support apply_rope_fusion.")
+            self.rotary_pos_emb = GrapeMRotaryEmbedding(
+                kv_channels=self.config.kv_channels,
+                rotary_percent=rotary_percent,
+                rotary_interleaved=self.config.rotary_interleaved,
+                seq_len_interpolation_factor=seq_len_interpolation_factor,
+                rotary_base=rotary_base,
+                learnable_freq=self.config.grapem_learnable_freq,
+                share_across_heads=self.config.grapem_share_across_heads,
+                log_freq_scale=self.config.grapem_log_freq_scale,
+                use_cpu_initialization=self.config.use_cpu_initialization,
+                cp_group=self.pg_collection.cp,
+                num_attention_heads=self.config.num_attention_heads,
             )
 
         elif self.position_embedding_type == 'yarn':
@@ -345,6 +362,22 @@ class GPTModel(LanguageModule):
                     packed_seq=packed_seq_params is not None
                     and packed_seq_params.qkv_format == 'thd',
                 )
+        elif self.position_embedding_type == 'grapem' and not self.config.multi_latent_attention:
+            if in_inference_mode and (
+                self.config.flash_decode
+                or (
+                    hasattr(inference_context, 'use_flashinfer_fused_rope')
+                    and inference_context.use_flashinfer_fused_rope
+                )
+            ):
+                raise NotImplementedError("GRAPE-M does not support flash decode or flashinfer.")
+            rotary_seq_len = self.rotary_pos_emb.get_rotary_seq_len(
+                inference_context, self.decoder, decoder_input, self.config, packed_seq_params
+            )
+            rotary_pos_emb = self.rotary_pos_emb(
+                rotary_seq_len,
+                packed_seq=packed_seq_params is not None and packed_seq_params.qkv_format == 'thd',
+            )
         elif self.position_embedding_type == 'yarn':
             if self.training or not self.config.flash_decode:
                 rotary_seq_len = self.rotary_pos_emb.get_rotary_seq_len(

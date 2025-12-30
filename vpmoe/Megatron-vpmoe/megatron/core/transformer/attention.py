@@ -13,6 +13,7 @@ from megatron.core.models.common.embeddings.rope_utils import (
     apply_rotary_pos_emb,
     apply_rotary_pos_emb_with_cos_sin,
 )
+from megatron.core.models.common.embeddings.alibi import AlibiBias, build_alibi_slopes
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.parallel_state import (
     get_data_parallel_group,
@@ -27,6 +28,7 @@ from megatron.core.tensor_parallel.mappings import all_gather_last_dim_from_tens
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
+from megatron.core.transformer.utils import is_layer_window_attention
 from megatron.core.utils import (
     deprecate_inference_params,
     divide,
@@ -197,6 +199,13 @@ class Attention(MegatronModule, ABC):
                 self.config.num_attention_heads, world_size
             )
         self.world_size = world_size
+
+        self.alibi_bias = None
+        if getattr(self.config, "grape_a", False) and self.attention_type == "self":
+            slopes = build_alibi_slopes(self.config.num_attention_heads)
+            start = get_pg_rank(self.pg_collection.tp) * self.num_attention_heads_per_partition
+            end = start + self.num_attention_heads_per_partition
+            self.alibi_bias = AlibiBias(slopes=slopes[start:end])
 
         # To support both CUDA Graphs and key value with different hidden size
         self.key_hidden_size = self.hidden_size_per_attention_head
@@ -751,6 +760,23 @@ class Attention(MegatronModule, ABC):
             assert HAVE_FA3 or is_fa_min_version(
                 "2.7.3"
             ), "flash attn verion v2.7.3 and above is required for dynamic batching."
+
+        if attention_bias is None and self.alibi_bias is not None:
+            if packed_seq_params is not None:
+                raise NotImplementedError("GRAPE-A (ALiBi) does not support packed sequences yet.")
+            if inference_context is not None:
+                raise NotImplementedError("GRAPE-A (ALiBi) is not supported in inference yet.")
+            if not is_layer_window_attention(
+                self.config.window_size, self.config.window_attn_skip_freq, self.layer_number
+            ):
+                seq_len = (
+                    attention_mask.size(-1)
+                    if attention_mask is not None
+                    else hidden_states.size(0)
+                )
+                attention_bias = self.alibi_bias.get_bias(
+                    seq_len, hidden_states.device, hidden_states.dtype
+                )
 
         # hidden_states: [sq, b, h]
         is_inference_mode = inference_context is not None and not self.training

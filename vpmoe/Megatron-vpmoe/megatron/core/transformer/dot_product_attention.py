@@ -154,7 +154,10 @@ class DotProductAttention(MegatronModule):
             "Packed sequence is not supported by DotProductAttention."
             "Please use TEDotProductAttention instead."
         )
-        assert attention_bias is None, "Attention bias is not supported for DotProductAttention."
+        if attention_bias is not None and self.config.context_parallel_size > 1:
+            raise NotImplementedError(
+                "Attention bias with context parallelism is not supported yet."
+            )
 
         # ===================================
         # Raw attention scores. [b, n/p, s, s]
@@ -201,6 +204,8 @@ class DotProductAttention(MegatronModule):
 
         # change view to [b, np, sq, sk]
         attention_scores = matmul_result.view(*output_size)
+        if attention_bias is not None:
+            attention_scores = attention_scores + attention_bias.to(dtype=attention_scores.dtype)
 
         # ===========================
         # Attention probs and dropout

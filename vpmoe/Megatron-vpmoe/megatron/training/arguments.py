@@ -1696,7 +1696,7 @@ def _add_network_size_args(parser):
                        help='Maximum number of position embeddings to use. '
                        'This is the size of position embedding.')
     group.add_argument('--position-embedding-type', type=str, default='learned_absolute',
-                        choices=['learned_absolute', 'rope', 'mrope', 'relative', 'none'],
+                        choices=['learned_absolute', 'rope', 'grapem', 'mrope', 'relative', 'none'],
                         help='Position embedding type.')
     group.add_argument('--relative-attention-num-buckets', type=int, default=32,
                         help='Number of buckets for relative position embeddings.')
@@ -1726,6 +1726,28 @@ def _add_network_size_args(parser):
                             'By default this is disabled and set to None, indicating RoPE will be performed'
                             'on every layer.'
                        )
+    group.add_argument('--grape-a', action='store_true', default=False,
+                       help='Enable GRAPE-A (ALiBi special case) on global layers.')
+    group.add_argument('--grapem-learnable-freq', dest='grapem_learnable_freq',
+                       action='store_true', default=True,
+                       help='Make GRAPE-M frequencies learnable.')
+    group.add_argument('--no-grapem-learnable-freq', dest='grapem_learnable_freq',
+                       action='store_false',
+                       help='Freeze GRAPE-M frequencies.')
+    group.add_argument('--grapem-share-across-heads', dest='grapem_share_across_heads',
+                       action='store_true', default=True,
+                       help='Share GRAPE-M frequencies across heads.')
+    group.add_argument('--grapem-per-head', dest='grapem_share_across_heads',
+                       action='store_false',
+                       help='Use per-head GRAPE-M frequencies.')
+    group.add_argument('--grapem-log-freq-scale', type=float, default=16.0,
+                       help='Scale for GRAPE-M log-frequency parameters.')
+    group.add_argument('--use-tpa', action='store_true', default=False,
+                       help='Use Tensor Product Attention (TPA) for local layers.')
+    group.add_argument('--tpa-rank', type=int, default=None,
+                       help='TPA CP rank for K/V projections.')
+    group.add_argument('--tpa-q-rank', type=int, default=None,
+                       help='TPA CP rank for Q projections.')
     group.add_argument('--no-position-embedding',
                        action='store_false',
                        help='Disable position embedding. Deprecated: use --position-embedding-type',

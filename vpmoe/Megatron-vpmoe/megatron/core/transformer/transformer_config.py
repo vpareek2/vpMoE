@@ -177,6 +177,27 @@ class TransformerConfig(ModelParallelConfig):
     """True is rotate pairs of even and odd dimensions (RoFormer style), False is rotate pairs of
     first half and second half (LLaMa style). Default to False."""
 
+    use_tpa: bool = False
+    """Whether to use Tensor Product Attention (TPA) for local (windowed) layers."""
+
+    tpa_rank: Optional[int] = None
+    """TPA CP rank for K/V projections."""
+
+    tpa_q_rank: Optional[int] = None
+    """TPA CP rank for Q projections."""
+
+    grape_a: bool = False
+    """Enable GRAPE-A (ALiBi special case) for global layers."""
+
+    grapem_learnable_freq: bool = True
+    """Whether GRAPE-M frequencies are learnable."""
+
+    grapem_share_across_heads: bool = True
+    """Whether GRAPE-M frequencies are shared across heads."""
+
+    grapem_log_freq_scale: float = 16.0
+    """Scale for GRAPE-M log-frequency parameters to reduce effective learning rate."""
+
     window_size: Optional[Tuple[int, int]] = None
     """If not None, then will use sliding window attention. The size of the window is specified by
     the numbers inside the tuple; -1 is special value meaning "infinite window size"."""

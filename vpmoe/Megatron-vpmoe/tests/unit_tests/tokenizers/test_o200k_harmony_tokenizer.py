@@ -107,6 +107,8 @@ def test_o200k_harmony_training_builder_uses_core(o200k_vocab_path: Path):
     tok = training_tokenizer.build_tokenizer(args)
 
     assert tok.vocab_size == O200K_PADDED_VOCAB
+    assert args.vocab_size == O200K_PADDED_VOCAB
+    assert args.padded_vocab_size == O200K_PADDED_VOCAB
     assert isinstance(tok._tokenizer, O200kHarmonyTokenizer)
     assert tok.vocab["<|end|>"] == 200007
     assert tok.tokenize("<|start|>") == [200006]

@@ -1,5 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
+import math
+
 from megatron.core.tokenizers import MegatronTokenizer
 
 MEGATRON_TOKENIZERS = ['BertWordPieceLowerCase', 'BertWordPieceCase', 'GPT2BPETokenizer']
@@ -72,5 +74,35 @@ def build_tokenizer(args):
     tokenizer = MegatronTokenizer.from_pretrained(
         tokenizer_path=tokenizer_path, metadata_path=metadata, **kwargs
     )
+
+    # Training code expects these to be populated for embedding construction.
+    # Keep behavior aligned with the legacy tokenizer builder.
+    if args.tokenizer_type == 'O200kHarmonyTokenizer':
+        from megatron.core.tokenizers.text.libraries.o200k_harmony_tokenizer import (
+            O200K_HARMONY_PADDED_VOCAB_SIZE,
+        )
+
+        if getattr(args, "vocab_size", None) not in (None, O200K_HARMONY_PADDED_VOCAB_SIZE):
+            raise ValueError(
+                "O200k Harmony tokenizer requires "
+                f"vocab_size={O200K_HARMONY_PADDED_VOCAB_SIZE}"
+            )
+        if getattr(args, "padded_vocab_size", None) not in (None, O200K_HARMONY_PADDED_VOCAB_SIZE):
+            raise ValueError(
+                "O200k Harmony tokenizer requires "
+                f"padded_vocab_size={O200K_HARMONY_PADDED_VOCAB_SIZE}"
+            )
+        args.vocab_size = O200K_HARMONY_PADDED_VOCAB_SIZE
+        args.padded_vocab_size = O200K_HARMONY_PADDED_VOCAB_SIZE
+    else:
+        if getattr(args, "vocab_size", None) is None:
+            args.vocab_size = getattr(tokenizer, "vocab_size", None)
+        if getattr(args, "padded_vocab_size", None) is None:
+            make_divisible_by = getattr(args, "make_vocab_size_divisible_by", None)
+            tp_size = getattr(args, "tensor_model_parallel_size", None)
+            vocab_size = getattr(args, "vocab_size", None)
+            if make_divisible_by is not None and tp_size is not None and vocab_size is not None:
+                multiple = int(make_divisible_by) * int(tp_size)
+                args.padded_vocab_size = int(math.ceil(int(vocab_size) / multiple) * multiple)
 
     return tokenizer

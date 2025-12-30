@@ -22,6 +22,7 @@ We must run the student with the **same tokenizer family as the teacher**: **o20
 
 ### Megatron-LM integration (what we will run)
 
+- **Status:** implemented and test-verified (core tokenizer path only).
 - **Tokenizer type:** `O200kHarmonyTokenizer` (Megatron-integrated, no extra stack).
 - **Tokenizer asset:** a **local** `o200k_base.tiktoken` file (no network fetch at runtime).
 - **Hash check:** `sha256=446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d`.
@@ -40,13 +41,52 @@ Example (training / preprocess):
 builder for non-core tokenizers, pass `--legacy-tokenizer`. Our training path should
 use the core tokenizer stack.
 
+### Data pipeline (SYNTH → Harmony → Megatron datasets)
+
+- **Status:** TODO (needs implementation + end-to-end testing).
+- Goal: deterministic `.bin/.idx` dataset builds from Harmony conversations using `O200kHarmonyTokenizer`, including loss masks and reasoning/final span masks per `docs/distillation_strategy.md`.
+
 ## GRAPE (positional encoding)
 
 Our locked baseline uses **GRAPE‑M** (local layers) + **GRAPE‑A** (global layers) (`docs/architecture.md`). Megatron does not support this out of the box in our current tree, so we need to **add GRAPE positional encoding support** (and wire it into the local/global attention schedule) as part of the Megatron integration.
 
+For clarity, in our baseline **GRAPE‑A means the ALiBi special case** (a head-wise linear distance bias); we are not locking in GRAPE‑AP or gated GRAPE‑A variants unless explicitly updated in the architecture spec.
+
+- **Status:** implemented (GRAPE‑M as `position-embedding-type=grapem`, GRAPE‑A via `--grape-a`).
+- **Constraints:** GRAPE‑M does not support flash decode/flashinfer yet; GRAPE‑A is training‑only (no packed sequences or inference).
+- **Config:** set `--no-rope-freq` to skip GRAPE‑M on global layers when `--grape-a` is enabled.
+
 ## Tensor Product Attention (TPA) (local sliding-window)
 
 Our locked baseline uses **sliding-window local attention** with **TPA**, window size **128**, under a **3:1 local:global** schedule (`docs/architecture.md`). Megatron’s existing window attention is not TPA, so we need to **implement TPA for local layers** and hook it into Megatron’s attention backend selection for the windowed (local) blocks.
+
+- **Status:** implemented via `--use-tpa` with `--tpa-rank/--tpa-q-rank` (local layers only).
+- **Constraints:** requires `--window-size` set and `num_query_groups >= tensor_model_parallel_size`.
+
+### Smoke test (end-to-end, mock data)
+
+We keep an **opt-in** functional smoke test that runs a tiny `pretrain_gpt.py` job exercising
+GRAPE‑M + GRAPE‑A + window schedule + TPA. Enable it explicitly:
+
+```bash
+VPMOE_RUN_SMOKE=1 O200K_HARMONY_VOCAB_PATH=/workspace/vpmoe/data/tokenizer/o200k_base.tiktoken \
+  uv run pytest -q vpmoe/Megatron-vpmoe/tests/functional_tests/python_test_utils/test_smoke_grape_tpa_pretrain.py
+```
+
+### Sliding-window semantics (avoid off-by-one)
+
+We treat the configured window size (**128**) as **window span length in tokens, including the current token**.
+
+For a query position `i`, allowed key positions are:
+
+`j ∈ [max(0, i - (W - 1)), i]` where `W=128`.
+
+Equivalently, we mask if:
+
+- `j > i` (future / causal)
+- `i - j >= W` (too far in the past)
+
+This makes the maximum lookback distance `W-1` (127 for `W=128`), and avoids the common “`W` means `W+1` tokens” integration bug seen in some backends.
 
 ## Optimizer (Normuon + Polar Express)
 

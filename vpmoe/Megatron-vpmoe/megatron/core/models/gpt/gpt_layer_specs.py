@@ -26,6 +26,7 @@ from megatron.core.transformer.multi_token_prediction import (
 )
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.tpa import TPALinearQKV
 from megatron.core.transformer.torch_norm import L2Norm
 from megatron.core.transformer.transformer_block import (
     TransformerBlockSubmodules,
@@ -38,6 +39,7 @@ from megatron.core.transformer.transformer_layer import (
     get_transformer_layer_offset,
 )
 from megatron.core.utils import is_te_min_version
+from megatron.core.transformer.utils import is_layer_window_attention
 
 try:
     import transformer_engine as te  # type: ignore[import-untyped]  # pylint: disable=unused-import
@@ -423,6 +425,131 @@ def get_gpt_layer_local_spec(
         )
 
 
+def get_gpt_layer_local_spec_with_tpa(
+    num_experts: Optional[int] = None,
+    moe_grouped_gemm: Optional[bool] = False,
+    qk_layernorm: Optional[bool] = False,
+    multi_latent_attention: Optional[bool] = False,
+    moe_use_legacy_grouped_gemm: Optional[bool] = False,
+    normalization: Optional[str] = None,
+    qk_l2_norm: Optional[bool] = False,
+    use_kitchen: bool = False,
+    use_kitchen_attention: bool = False,
+    kitchen_attention_backend: str = "sdpa",
+) -> ModuleSpec:
+    """Local-spec layer using TPA for attention projections."""
+
+    assert not multi_latent_attention, "TPA is not supported with MLA."
+
+    if use_kitchen:
+        assert HAVE_KITCHEN
+        backend = KitchenSpecProvider(
+            fallback=LocalSpecProvider(),
+            use_kitchen_attention=use_kitchen_attention,
+            kitchen_attention_backend=kitchen_attention_backend,
+        )
+    else:
+        backend = LocalSpecProvider()
+
+    if normalization == "RMSNorm":
+        layer_norm = backend.layer_norm(rms_norm=True, for_qk=False)
+        qk_norm = backend.layer_norm(rms_norm=True, for_qk=True)
+    else:
+        layer_norm = backend.layer_norm(rms_norm=False, for_qk=False)
+        qk_norm = backend.layer_norm(rms_norm=False, for_qk=True)
+
+    mlp = get_mlp_module_spec_for_backend(
+        backend=backend,
+        num_experts=num_experts,
+        moe_grouped_gemm=moe_grouped_gemm,
+        moe_use_legacy_grouped_gemm=moe_use_legacy_grouped_gemm,
+    )
+
+    return ModuleSpec(
+        module=TransformerLayer,
+        submodules=TransformerLayerSubmodules(
+            input_layernorm=layer_norm,
+            self_attention=ModuleSpec(
+                module=SelfAttention,
+                params={"attn_mask_type": AttnMaskType.causal},
+                submodules=SelfAttentionSubmodules(
+                    linear_qkv=ModuleSpec(module=TPALinearQKV),
+                    core_attention=backend.core_attention(),
+                    linear_proj=backend.row_parallel_linear(),
+                    q_layernorm=(L2Norm if qk_l2_norm else (qk_norm if qk_layernorm else IdentityOp)),
+                    k_layernorm=(L2Norm if qk_l2_norm else (qk_norm if qk_layernorm else IdentityOp)),
+                ),
+            ),
+            self_attn_bda=get_bias_dropout_add,
+            pre_mlp_layernorm=layer_norm,
+            mlp=mlp,
+            mlp_bda=get_bias_dropout_add,
+            sharded_state_dict_keys_map={
+                "input_layernorm.": "self_attention.linear_qkv.layer_norm_",
+                "pre_mlp_layernorm.": "mlp.linear_fc1.layer_norm_",
+            },
+        ),
+    )
+
+
+def get_gpt_layer_with_transformer_engine_spec_with_tpa(
+    num_experts: Optional[int] = None,
+    moe_grouped_gemm: Optional[bool] = False,
+    qk_layernorm: Optional[bool] = False,
+    multi_latent_attention: Optional[bool] = False,
+    moe_use_legacy_grouped_gemm: Optional[bool] = False,
+    qk_l2_norm: Optional[bool] = False,
+    use_kitchen: bool = False,
+    use_te_activation_func: bool = False,
+    use_kitchen_attention: bool = False,
+    kitchen_attention_backend: str = "sdpa",
+) -> ModuleSpec:
+    """Transformer-Engine spec layer using TPA for attention projections."""
+
+    assert not multi_latent_attention, "TPA is not supported with MLA."
+
+    if use_kitchen:
+        assert HAVE_KITCHEN
+        backend: BackendSpecProvider = KitchenSpecProvider(
+            fallback=TESpecProvider(),
+            use_kitchen_attention=use_kitchen_attention,
+            kitchen_attention_backend=kitchen_attention_backend,
+        )
+    else:
+        backend = TESpecProvider()
+
+    mlp = get_mlp_module_spec_for_backend(
+        backend=backend,
+        num_experts=num_experts,
+        moe_grouped_gemm=moe_grouped_gemm,
+        moe_use_legacy_grouped_gemm=moe_use_legacy_grouped_gemm,
+        use_te_activation_func=use_te_activation_func,
+    )
+
+    qk_norm = backend.layer_norm(for_qk=True)
+    return ModuleSpec(
+        module=TransformerLayer,
+        submodules=TransformerLayerSubmodules(
+            input_layernorm=backend.layer_norm(),
+            self_attention=ModuleSpec(
+                module=SelfAttention,
+                params={"attn_mask_type": AttnMaskType.causal},
+                submodules=SelfAttentionSubmodules(
+                    linear_qkv=ModuleSpec(module=TPALinearQKV),
+                    core_attention=backend.core_attention(),
+                    linear_proj=backend.row_parallel_linear(),
+                    q_layernorm=(L2Norm if qk_l2_norm else (qk_norm if qk_layernorm else IdentityOp)),
+                    k_layernorm=(L2Norm if qk_l2_norm else (qk_norm if qk_layernorm else IdentityOp)),
+                ),
+            ),
+            self_attn_bda=get_bias_dropout_add,
+            pre_mlp_layernorm=backend.layer_norm(),
+            mlp=mlp,
+            mlp_bda=get_bias_dropout_add,
+        ),
+    )
+
+
 def _get_mlp_module_spec(
     use_te: Optional[bool] = True,
     num_experts: Optional[int] = None,
@@ -629,6 +756,169 @@ def get_gpt_decoder_block_spec(
         layer_specs=local_layer_specs, layer_norm=layer_norm_impl
     )
 
+    return block_spec
+
+
+def get_gpt_decoder_block_spec_with_tpa(
+    config: TransformerConfig,
+    use_transformer_engine: bool,
+    normalization: Optional[str] = None,
+    qk_l2_norm: Optional[bool] = False,
+    vp_stage: Optional[int] = None,
+    pp_rank: Optional[int] = None,
+) -> TransformerBlockSubmodules:
+    """GPT block spec with TPA on local (windowed) layers."""
+
+    if config.window_size is None:
+        raise ValueError("TPA requires --window-size to be set.")
+
+    if use_transformer_engine:
+        layer_norm_impl = TENorm
+        local_dense_spec = get_gpt_layer_with_transformer_engine_spec_with_tpa(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=config.qk_layernorm,
+            multi_latent_attention=config.multi_latent_attention,
+            moe_use_legacy_grouped_gemm=config.moe_use_legacy_grouped_gemm,
+            qk_l2_norm=qk_l2_norm,
+            use_kitchen=config.use_kitchen,
+            use_te_activation_func=config.use_te_activation_func,
+            use_kitchen_attention=config.use_kitchen_attention,
+            kitchen_attention_backend=config.kitchen_attention_backend,
+        )
+        local_moe_spec = get_gpt_layer_with_transformer_engine_spec_with_tpa(
+            num_experts=config.num_moe_experts,
+            moe_grouped_gemm=config.moe_grouped_gemm,
+            qk_layernorm=config.qk_layernorm,
+            multi_latent_attention=config.multi_latent_attention,
+            moe_use_legacy_grouped_gemm=config.moe_use_legacy_grouped_gemm,
+            qk_l2_norm=qk_l2_norm,
+            use_kitchen=config.use_kitchen,
+            use_te_activation_func=config.use_te_activation_func,
+            use_kitchen_attention=config.use_kitchen_attention,
+            kitchen_attention_backend=config.kitchen_attention_backend,
+        )
+        global_dense_spec = get_gpt_layer_with_transformer_engine_spec(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=config.qk_layernorm,
+            multi_latent_attention=config.multi_latent_attention,
+            moe_use_legacy_grouped_gemm=config.moe_use_legacy_grouped_gemm,
+            qk_l2_norm=qk_l2_norm,
+            use_kitchen=config.use_kitchen,
+            use_te_activation_func=config.use_te_activation_func,
+            use_kitchen_attention=config.use_kitchen_attention,
+            kitchen_attention_backend=config.kitchen_attention_backend,
+        )
+        global_moe_spec = get_gpt_layer_with_transformer_engine_spec(
+            num_experts=config.num_moe_experts,
+            moe_grouped_gemm=config.moe_grouped_gemm,
+            qk_layernorm=config.qk_layernorm,
+            multi_latent_attention=config.multi_latent_attention,
+            moe_use_legacy_grouped_gemm=config.moe_use_legacy_grouped_gemm,
+            qk_l2_norm=qk_l2_norm,
+            use_kitchen=config.use_kitchen,
+            use_te_activation_func=config.use_te_activation_func,
+            use_kitchen_attention=config.use_kitchen_attention,
+            kitchen_attention_backend=config.kitchen_attention_backend,
+        )
+    else:
+        layer_norm_impl = LNImpl
+        local_dense_spec = get_gpt_layer_local_spec_with_tpa(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=config.qk_layernorm,
+            multi_latent_attention=config.multi_latent_attention,
+            moe_use_legacy_grouped_gemm=config.moe_use_legacy_grouped_gemm,
+            normalization=normalization,
+            qk_l2_norm=qk_l2_norm,
+            use_kitchen=config.use_kitchen,
+            use_kitchen_attention=config.use_kitchen_attention,
+            kitchen_attention_backend=config.kitchen_attention_backend,
+        )
+        local_moe_spec = get_gpt_layer_local_spec_with_tpa(
+            num_experts=config.num_moe_experts,
+            moe_grouped_gemm=config.moe_grouped_gemm,
+            qk_layernorm=config.qk_layernorm,
+            multi_latent_attention=config.multi_latent_attention,
+            moe_use_legacy_grouped_gemm=config.moe_use_legacy_grouped_gemm,
+            normalization=normalization,
+            qk_l2_norm=qk_l2_norm,
+            use_kitchen=config.use_kitchen,
+            use_kitchen_attention=config.use_kitchen_attention,
+            kitchen_attention_backend=config.kitchen_attention_backend,
+        )
+        global_dense_spec = get_gpt_layer_local_spec(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=config.qk_layernorm,
+            multi_latent_attention=config.multi_latent_attention,
+            moe_use_legacy_grouped_gemm=config.moe_use_legacy_grouped_gemm,
+            normalization=normalization,
+            qk_l2_norm=qk_l2_norm,
+            use_kitchen=config.use_kitchen,
+            use_kitchen_attention=config.use_kitchen_attention,
+            kitchen_attention_backend=config.kitchen_attention_backend,
+        )
+        global_moe_spec = get_gpt_layer_local_spec(
+            num_experts=config.num_moe_experts,
+            moe_grouped_gemm=config.moe_grouped_gemm,
+            qk_layernorm=config.qk_layernorm,
+            multi_latent_attention=config.multi_latent_attention,
+            moe_use_legacy_grouped_gemm=config.moe_use_legacy_grouped_gemm,
+            normalization=normalization,
+            qk_l2_norm=qk_l2_norm,
+            use_kitchen=config.use_kitchen,
+            use_kitchen_attention=config.use_kitchen_attention,
+            kitchen_attention_backend=config.kitchen_attention_backend,
+        )
+
+    if isinstance(config.moe_layer_freq, int):
+        moe_layer_pattern = [
+            1 if (i % config.moe_layer_freq == 0) else 0 for i in range(config.num_layers)
+        ]
+    elif isinstance(config.moe_layer_freq, list):
+        moe_layer_pattern = config.moe_layer_freq
+        assert len(moe_layer_pattern) == config.num_layers, (
+            f"Invalid length of moe_layer_pattern: {len(moe_layer_pattern)}, "
+            f"expected {config.num_layers}, "
+            f"current moe layer pattern: {config.moe_layer_freq}"
+        )
+    else:
+        raise ValueError(
+            f"Invalid moe_layer_freq: {type(config.moe_layer_freq)}, {config.moe_layer_freq}"
+        )
+
+    layer_specs = []
+    for layer_number in range(1, config.num_layers + 1):
+        is_local = is_layer_window_attention(
+            config.window_size, config.window_attn_skip_freq, layer_number
+        )
+        if moe_layer_pattern[layer_number - 1] == 1:
+            layer_specs.append(local_moe_spec if is_local else global_moe_spec)
+        elif moe_layer_pattern[layer_number - 1] == 0:
+            layer_specs.append(local_dense_spec if is_local else global_dense_spec)
+        else:
+            raise ValueError(f"Invalid layer pattern: {moe_layer_pattern}")
+
+    num_layers_to_build = get_num_layers_to_build(config, vp_stage=vp_stage, pp_rank=pp_rank)
+
+    if config.pipeline_model_parallel_layout is not None:
+        layout = config.pipeline_model_parallel_layout
+        assert isinstance(layout, PipelineParallelLayerLayout)
+        local_layer_specs = [
+            layer_specs[layer_id]
+            for layer_id in layout.get_layer_id_list(
+                layer_type=LayerType.decoder, vp_stage=vp_stage, pp_rank=pp_rank
+            )
+        ]
+    else:
+        offset = get_transformer_layer_offset(config, vp_stage=vp_stage, pp_rank=pp_rank)
+        local_layer_specs = layer_specs[offset : offset + num_layers_to_build]
+
+    block_spec = TransformerBlockSubmodules(
+        layer_specs=local_layer_specs, layer_norm=layer_norm_impl
+    )
     return block_spec
 
 

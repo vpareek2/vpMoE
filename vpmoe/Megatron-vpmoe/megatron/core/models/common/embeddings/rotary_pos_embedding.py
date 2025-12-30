@@ -30,7 +30,7 @@ from megatron.core.utils import deprecate_inference_params
 logger = logging.getLogger(__name__)
 
 
-__all__ = ['RotaryEmbedding', 'MultimodalRotaryEmbedding']
+__all__ = ['RotaryEmbedding', 'GrapeMRotaryEmbedding', 'MultimodalRotaryEmbedding']
 
 
 class RotaryEmbedding(nn.Module):
@@ -169,9 +169,7 @@ class RotaryEmbedding(nn.Module):
         if not self.rotary_interleaved:
             emb = torch.cat((freqs, freqs), dim=-1)
         else:
-            emb = torch.stack((freqs.view(-1, 1), freqs.view(-1, 1)), dim=-1).view(
-                freqs.shape[0], -1
-            )
+            emb = torch.stack((freqs, freqs), dim=-1).view(*freqs.shape[:-1], -1)
         # emb [seq_length, .., dim]
         emb = emb[:, None, None, :]
         if self.cp_group is not None and self.cp_group.size() > 1 and not packed_seq:
@@ -229,6 +227,136 @@ class RotaryEmbedding(nn.Module):
 
         return rotary_seq_len
 
+
+class GrapeMRotaryEmbedding(nn.Module):
+    """GRAPE-M rotary embedding with learnable frequencies (RoPE-compatible)."""
+
+    def __init__(
+        self,
+        kv_channels: int,
+        rotary_percent: float,
+        rotary_interleaved: bool = False,
+        seq_len_interpolation_factor: float = None,
+        rotary_base: int = 10000,
+        learnable_freq: bool = True,
+        share_across_heads: bool = True,
+        log_freq_scale: float = 16.0,
+        use_cpu_initialization: bool = False,
+        cp_group: Optional[torch.distributed.ProcessGroup] = None,
+        num_attention_heads: Optional[int] = None,
+    ) -> None:
+        super().__init__()
+
+        dim = kv_channels
+        if rotary_percent < 1.0:
+            dim = int(dim * rotary_percent)
+        self.rotary_interleaved = rotary_interleaved
+        self.seq_len_interpolation_factor = seq_len_interpolation_factor
+        self.share_across_heads = share_across_heads
+        self.log_freq_scale = float(log_freq_scale)
+        if self.log_freq_scale <= 0:
+            raise ValueError("log_freq_scale must be > 0")
+
+        if not share_across_heads and num_attention_heads is None:
+            raise ValueError("num_attention_heads must be set when share_across_heads=False.")
+
+        device = 'cpu' if use_cpu_initialization else torch.cuda.current_device()
+        inv_freq = 1.0 / (
+            rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim)
+        )
+        log_init = inv_freq.log().float() * self.log_freq_scale
+
+        if share_across_heads:
+            self.log_freq = nn.Parameter(log_init, requires_grad=learnable_freq)
+        else:
+            self.log_freq = nn.Parameter(
+                log_init.unsqueeze(0).repeat(num_attention_heads, 1),
+                requires_grad=learnable_freq,
+            )
+
+        self.cp_group = (
+            cp_group
+            if cp_group is not None
+            else parallel_state.get_context_parallel_group(check_initialized=False)
+        )
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        if getattr(self, "log_freq", None) is not None:
+            self.log_freq.data = self.log_freq.data.float()
+            if self.log_freq.grad is not None:
+                self.log_freq.grad.data = self.log_freq.grad.data.float()
+        return self
+
+    @property
+    def freq(self) -> Tensor:
+        scaled_log_freq = self.log_freq / self.log_freq_scale
+        if self.share_across_heads:
+            return torch.exp(scaled_log_freq)
+        return torch.exp(scaled_log_freq)
+
+    def get_freqs_non_repeated(self, max_seq_len: int, offset: int = 0) -> Tensor:
+        seq = (
+            torch.arange(max_seq_len, device=self.log_freq.device, dtype=self.log_freq.dtype)
+            + offset
+        )
+        if self.seq_len_interpolation_factor is not None:
+            seq *= 1 / self.seq_len_interpolation_factor
+
+        if self.share_across_heads:
+            freqs = torch.outer(seq, self.freq)
+        else:
+            freqs = seq[:, None, None] * self.freq[None, :, :]
+        return freqs
+
+    def get_cos_sin(self, max_seq_len: int, offset: int = 0) -> (Tensor, Tensor):
+        freqs = self.get_freqs_non_repeated(max_seq_len, offset)
+        cos = torch.cos(freqs)
+        sin = torch.sin(freqs)
+        return cos, sin
+
+    def forward(self, max_seq_len: int, offset: int = 0, packed_seq: bool = False) -> Tensor:
+        freqs = self.get_freqs_non_repeated(max_seq_len, offset)
+        if not self.rotary_interleaved:
+            emb = torch.cat((freqs, freqs), dim=-1)
+        else:
+            emb = torch.stack((freqs.view(-1, 1), freqs.view(-1, 1)), dim=-1).view(
+                freqs.shape[0], -1
+            )
+        if self.share_across_heads:
+            emb = emb[:, None, None, :]
+        else:
+            emb = emb[:, None, :, :]
+        if self.cp_group is not None and self.cp_group.size() > 1 and not packed_seq:
+            emb = get_pos_emb_on_this_cp_rank(emb, 0, self.cp_group)
+        return emb
+
+    def get_rotary_seq_len(
+        self,
+        inference_context: BaseInferenceContext,
+        transformer: TransformerBlock,
+        transformer_input: Tensor,
+        transformer_config: TransformerConfig,
+        packed_seq_params: Optional[PackedSeqParams] = None,
+        *,
+        inference_params: Optional[BaseInferenceContext] = None,
+    ) -> int:
+        inference_context = deprecate_inference_params(inference_context, inference_params)
+
+        if packed_seq_params is not None:
+            return max(packed_seq_params.max_seqlen_q, packed_seq_params.max_seqlen_kv)
+        if inference_context is not None:
+            rotary_seq_len = inference_context.max_sequence_length
+        else:
+            if transformer is not None and transformer.input_tensor is not None:
+                rotary_seq_len = transformer.input_tensor.size(0)
+            else:
+                rotary_seq_len = transformer_input.size(0)
+            if transformer_config.sequence_parallel:
+                rotary_seq_len *= transformer_config.tensor_model_parallel_size
+
+        rotary_seq_len *= transformer_config.context_parallel_size
+        return rotary_seq_len
 
 class MultimodalRotaryEmbedding(nn.Module):
     """Multimodal Rotary Embedding for language model.

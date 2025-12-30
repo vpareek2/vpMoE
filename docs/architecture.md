@@ -14,7 +14,7 @@ This repo is now treating the following as the **baseline configuration** to bui
 - Local/global attention schedule: **3:1** local:global
 - Local attention: sliding-window **TPA**, window **128**
 - Global attention: full causal **GQA**
-- Positional encoding: **GRAPE-M** (local) + **GRAPE-A** (global)
+- Positional encoding: **GRAPE-M** (local) + **GRAPE-A** (global, **ALiBi special case**)
 
 ### MoE Hyperparameters
 
