@@ -41,6 +41,10 @@ def build_tokenizer(args):
             kwargs['vocab_size'] = args.vocab_size
         kwargs['num_special_tokens'] = args.tiktoken_num_special_tokens
         kwargs['special_tokens'] = args.tokenizer_special_tokens
+    elif args.tokenizer_type == 'O200kHarmonyTokenizer':
+        tokenizer_library = 'o200k-harmony'
+        tokenizer_path = args.tokenizer_model
+        assert tokenizer_path is not None, "O200k Harmony tokenizer requires --tokenizer-model"
     elif args.tokenizer_type == 'HuggingFaceTokenizer':
         tokenizer_library = 'huggingface'
         tokenizer_path = args.tokenizer_model

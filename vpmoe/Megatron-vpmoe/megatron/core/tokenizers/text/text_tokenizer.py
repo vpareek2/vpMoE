@@ -12,6 +12,7 @@ TOKENIZER_MAPPING_LIBRARIES = OrderedDict(
         ("huggingface", "HuggingFaceTokenizer"),
         ("megatron", "MegatronHFTokenizer"),
         ("tiktoken", "TikTokenTokenizer"),
+        ("o200k-harmony", "O200kHarmonyTokenizer"),
         ("byte-level", "ByteLevelTokenizer"),
         ("null", "NullTokenizer"),
     ]

@@ -2841,6 +2841,7 @@ def _add_tokenizer_args(parser):
                                 'HuggingFaceTokenizer',
                                 'Llama2Tokenizer',
                                 'TikTokenizer',
+                                'O200kHarmonyTokenizer',
                                 'MultimodalTokenizer',
                                 'NullTokenizer',
                                 'NullMultimodalTokenizer',

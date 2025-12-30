@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from megatron.core.datasets.megatron_tokenizer import MegatronLegacyTokenizer
+from megatron.core.tokenizers.text.libraries.o200k_harmony_tokenizer import (
+    O200K_HARMONY_PADDED_VOCAB_SIZE,
+    build_o200k_harmony_encoding,
+    build_o200k_harmony_vocab,
+)
 
 from .bert_tokenization import FullTokenizer as FullBertTokenizer
 from .gpt2_tokenization import GPT2Tokenizer
@@ -65,6 +70,23 @@ def build_tokenizer(args, **kwargs):
             num_special_tokens=args.tiktoken_num_special_tokens,
             special_tokens=args.tokenizer_special_tokens,
         )
+    elif args.tokenizer_type == 'O200kHarmonyTokenizer':
+        assert args.tokenizer_model is not None
+        if args.vocab_size is not None and args.vocab_size != O200K_HARMONY_PADDED_VOCAB_SIZE:
+            raise ValueError(
+                f"O200k Harmony tokenizer requires vocab_size={O200K_HARMONY_PADDED_VOCAB_SIZE}"
+            )
+        if (
+            args.padded_vocab_size is not None
+            and args.padded_vocab_size != O200K_HARMONY_PADDED_VOCAB_SIZE
+        ):
+            raise ValueError(
+                "O200k Harmony tokenizer requires "
+                f"padded_vocab_size={O200K_HARMONY_PADDED_VOCAB_SIZE}"
+            )
+        args.vocab_size = O200K_HARMONY_PADDED_VOCAB_SIZE
+        args.padded_vocab_size = O200K_HARMONY_PADDED_VOCAB_SIZE
+        tokenizer = O200kHarmonyTokenizer(args.tokenizer_model)
     elif args.tokenizer_type == 'NullTokenizer':
         assert args.vocab_size is not None
         tokenizer = _NullTokenizer(args.vocab_size)
@@ -808,6 +830,75 @@ class CustomTikTokenizer(MegatronLegacyTokenizer):
     @property
     def decoder(self):
         return self._id_to_token
+
+
+class O200kHarmonyTokenizer(MegatronLegacyTokenizer):
+    def __init__(self, path: str):
+        super().__init__(path)
+        encoding, mergeable_ranks, special_tokens = build_o200k_harmony_encoding(path)
+
+        self._encoding = encoding
+        self._special_tokens = special_tokens
+        self._vocab_size = O200K_HARMONY_PADDED_VOCAB_SIZE
+        self._bos_id = special_tokens["<|startoftext|>"]
+        self._eos_id = special_tokens["<|endoftext|>"]
+        self._eod_id = special_tokens["<|endoftext|>"]
+        self._pad_id = -1
+
+        self._token_to_id, self._id_to_token = build_o200k_harmony_vocab(
+            mergeable_ranks, special_tokens
+        )
+
+    def tokenize(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
+        tokens = self._encoding.encode(s, allowed_special="all")
+        if bos:
+            tokens = [self.bos, *tokens]
+        if eos:
+            tokens = [*tokens, self.eos]
+        return tokens
+
+    def detokenize(self, tokens: List[int]) -> str:
+        return self._encoding.decode(tokens)
+
+    def offsets(self, ids: list[int], text: str) -> list[int]:
+        try:
+            return self._encoding.decode_with_offsets(ids)[1]
+        except UnicodeDecodeError:
+            token_bytes = self._encoding.decode_tokens_bytes(ids)
+            text_len = 0
+            offsets = []
+            for token in token_bytes:
+                offsets.append(max(0, text_len - (0x80 <= token[0] < 0xC0)))
+                text_len += sum(1 for c in token if not 0x80 <= c < 0xC0)
+            return offsets
+
+    @property
+    def vocab(self):
+        return self._token_to_id
+
+    @property
+    def inv_vocab(self):
+        return self._id_to_token
+
+    @property
+    def vocab_size(self) -> int:
+        return self._vocab_size
+
+    @property
+    def bos(self) -> int:
+        return self._bos_id
+
+    @property
+    def eos(self) -> int:
+        return self._eos_id
+
+    @property
+    def pad(self) -> int:
+        return self._pad_id
+
+    @property
+    def eod(self) -> int:
+        return self._eod_id
 
 
 class _NullTokenizer(MegatronLegacyTokenizer):

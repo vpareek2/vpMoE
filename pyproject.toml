@@ -5,7 +5,10 @@ description = "vpMoE research and training stack (container-first)."
 readme = "README.md"
 requires-python = ">=3.10"
 
-dependencies = []
+dependencies = [
+    "pytest>=9.0.2",
+    "tiktoken>=0.12.0",
+]
 
 [tool.uv]
 link-mode = "copy"

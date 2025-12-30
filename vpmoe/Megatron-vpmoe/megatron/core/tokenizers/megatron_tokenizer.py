@@ -19,7 +19,15 @@ TOKENIZER_MAPPING_NAMES = OrderedDict(
     ]
 )
 
-TOKENIZER_LIBRARIES = ["sentencepiece", "huggingface", "megatron", "tiktoken", "byte-level", "null"]
+TOKENIZER_LIBRARIES = [
+    "sentencepiece",
+    "huggingface",
+    "megatron",
+    "tiktoken",
+    "o200k-harmony",
+    "byte-level",
+    "null",
+]
 
 logger = logging.getLogger(__name__)
 
