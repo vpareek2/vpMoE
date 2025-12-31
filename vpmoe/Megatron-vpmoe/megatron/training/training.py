@@ -73,7 +73,7 @@ from megatron.core.transformer.module import Float16Module
 from megatron.core.distributed import DistributedDataParallelConfig, TorchFullyShardedDataParallelConfig
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
-from megatron.core.optimizer.optimizer import param_group_identifier_keys
+from megatron.core.optimizer.optimizer import get_param_group_identifier
 from megatron.core.transformer.custom_layers.batch_invariant_kernels import enable_batch_invariant_mode
 
 from megatron.core.optimizer.qk_clip import clip_qk
@@ -87,7 +87,14 @@ except ImportError:
 
 from megatron.core.distributed import finalize_model_grads
 from megatron.core.enums import ModelType
-from megatron.core.optimizer import get_megatron_optimizer, AdamOptimizerConfig, SGDOptimizerConfig, OptimizerConfig, ParamKey
+from megatron.core.optimizer import (
+    AdamOptimizerConfig,
+    NormuonOptimizerConfig,
+    OptimizerConfig,
+    ParamKey,
+    SGDOptimizerConfig,
+    get_megatron_optimizer,
+)
 from megatron.core.rerun_state_machine import (
     get_rerun_state_machine,
     destroy_rerun_state_machine,
@@ -555,7 +562,7 @@ def preprocess_common_state_dict(common_state_dict):
             if "param_groups" not in inner_optimizer:
                 return
             param_groups = inner_optimizer["param_groups"]
-            key_fn = lambda pg: [pg[key] for key in param_group_identifier_keys]
+            key_fn = get_param_group_identifier
             param_groups.sort(key=key_fn)
             inner_optimizer["param_groups"] = param_groups
 
@@ -1165,6 +1172,12 @@ def get_megatron_optimizer_config(args: Any) -> OptimizerConfig:
             if hasattr(args, f.name):
                 kwargs[f.name] = getattr(args, f.name)
         config = SGDOptimizerConfig(**kwargs)
+    elif args.optimizer == 'normuon':
+        kwargs = {}
+        for f in dataclasses.fields(NormuonOptimizerConfig):
+            if hasattr(args, f.name):
+                kwargs[f.name] = getattr(args, f.name)
+        config = NormuonOptimizerConfig(**kwargs)
     else:
         raise ValueError("Invalid optimizer type!")
 
@@ -1176,6 +1189,9 @@ def get_megatron_optimizer_config(args: Any) -> OptimizerConfig:
         decoupled_optimizer_config.lr = args.decoupled_lr
         if args.decoupled_min_lr is not None:
             decoupled_optimizer_config.min_lr = args.decoupled_min_lr
+        if getattr(decoupled_optimizer_config, "optimizer", None) == "normuon":
+            decoupled_optimizer_config.normuon_aux_lr = None
+            decoupled_optimizer_config.normuon_aux_min_lr = None
         config_overrides = {decoupled_param_key: decoupled_optimizer_config}
     else:
         config_overrides = None

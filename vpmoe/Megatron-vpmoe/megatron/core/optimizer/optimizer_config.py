@@ -306,3 +306,32 @@ class SGDOptimizerConfig(OptimizerConfig):
 
     sgd_momentum: float = 0.9
     """Momentum factor for SGD optimizer."""
+
+
+@dataclass
+class NormuonOptimizerConfig(OptimizerConfig):
+    """Normuon (Muon + variance reduction) optimizer configuration object."""
+
+    optimizer: str = 'normuon'
+    """Optimizer name."""
+
+    normuon_momentum: float = 0.95
+    """Momentum factor for Normuon."""
+
+    normuon_beta2: float = 0.95
+    """Second-moment factor for Normuon variance reduction."""
+
+    normuon_eps: float = 1e-10
+    """Epsilon for Normuon variance reduction."""
+
+    normuon_aux_lr: Optional[float] = None
+    """Optional LR for non-matrix (aux) parameters; defaults to `lr` when unset."""
+
+    normuon_aux_min_lr: Optional[float] = None
+    """Optional minimum LR for aux parameters; defaults to `min_lr` when unset."""
+
+    polar_express_safety_factor: float = 2e-2
+    """Safety factor applied before Polar Express iterations."""
+
+    polar_express_coeffs_path: Optional[str] = None
+    """Optional path to a JSON list of Polar Express coefficients."""

@@ -48,9 +48,15 @@ from .optimizer import (
     Float16OptimizerWithFloat16Params,
     FP32Optimizer,
     MegatronOptimizer,
-    param_group_identifier_keys,
 )
-from .optimizer_config import AdamOptimizerConfig, OptimizerConfig, ParamKey, SGDOptimizerConfig
+from .normuon import NormuonWithAuxAdam, build_normuon_param_groups, select_polar_express_coeffs
+from .optimizer_config import (
+    AdamOptimizerConfig,
+    NormuonOptimizerConfig,
+    OptimizerConfig,
+    ParamKey,
+    SGDOptimizerConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +193,7 @@ def _get_param_groups(
             'lr_mult': 1.0,  # For backwards compatibility.
             'is_expert_parallel': is_expert_parallel,
             'is_decoupled_lr': False,  # For backwards compatibility.
+            'use_normuon': False,
             'default_config': uses_default_config,
         }
 
@@ -208,6 +215,7 @@ def _get_param_groups_and_buffers(
     config_overrides: Optional[Dict[ParamKey, OptimizerConfig]],
     filter_fn: Callable,
     buffer_name: str,
+    param_group_builder: Callable = _get_param_groups,
 ) -> Tuple[List[Dict], Dict[int, List[_ParamAndGradBuffer]]]:
     """Returns parameter groups and buffer for optimizer.
 
@@ -226,7 +234,7 @@ def _get_param_groups_and_buffers(
     Returns:
         List of parameter groups and dictionary of model chunk IDs to buffers.
     """
-    param_groups = _get_param_groups(model_chunks, config, config_overrides)
+    param_groups = param_group_builder(model_chunks, config, config_overrides)
     param_groups = list(filter(filter_fn, param_groups))
     buffers = {}
     for model_chunk_idx, model_chunk in enumerate(model_chunks):
@@ -274,6 +282,14 @@ def _get_megatron_optimizer_based_on_param_groups(
     # hence an empty param_groups. However, we still need to create an optimizer
     # for the purposes of grad stats reductions.
     if param_groups:
+        if config.optimizer == 'normuon':
+            if config.optimizer_cpu_offload:
+                raise RuntimeError("Normuon does not support optimizer CPU offload.")
+            if config.use_distributed_optimizer:
+                raise RuntimeError("Normuon does not support distributed optimizer.")
+            if config.use_precision_aware_optimizer:
+                raise RuntimeError("Normuon does not support precision-aware optimizer.")
+
         if config.optimizer_cpu_offload:
             if torch.__version__ < '2.3.0':
                 warnings.warn(
@@ -375,6 +391,16 @@ def _get_megatron_optimizer_based_on_param_groups(
                 lr=config.lr,
                 weight_decay=config.weight_decay,
                 momentum=config.sgd_momentum,
+            )
+            init_state_fn = None
+        elif config.optimizer == 'normuon':
+            coeffs = select_polar_express_coeffs(config)
+            optimizer = NormuonWithAuxAdam(
+                param_groups,
+                coeffs=coeffs,
+                safety_factor=config.polar_express_safety_factor,
+                nesterov=True,
+                eps=config.normuon_eps,
             )
             init_state_fn = None
         else:
@@ -482,6 +508,10 @@ def get_megatron_optimizer(
             all_configs = list(config_overrides.values())
             assert all([getattr(x, field_name, None) == field for x in all_configs])
 
+    param_group_builder = (
+        build_normuon_param_groups if config.optimizer == 'normuon' else _get_param_groups
+    )
+
     # Separate out first model chunk if overlapping param AG with optimizer step.
     if config.overlap_param_gather_with_optimizer_step:
         all_dense_model_chunks = [[model_chunks[0]], model_chunks[1:]]
@@ -526,6 +556,7 @@ def get_megatron_optimizer(
                 config_overrides=config_overrides,
                 filter_fn=lambda g: True,
                 buffer_name='buffers',
+                param_group_builder=param_group_builder,
             )
 
             optimizers.append(
@@ -562,6 +593,7 @@ def get_megatron_optimizer(
             config_overrides=config_overrides,
             filter_fn=lambda g: not g['is_expert_parallel'],
             buffer_name='buffers',
+            param_group_builder=param_group_builder,
         )
         for model_chunk in dense_model_chunks:
             model_chunk.overlap_param_gather_with_optimizer_step = (
@@ -598,6 +630,7 @@ def get_megatron_optimizer(
         config_overrides=config_overrides,
         filter_fn=lambda g: g['is_expert_parallel'],
         buffer_name='expert_parallel_buffers',
+        param_group_builder=param_group_builder,
     )
     if dump_param_to_param_group_map is not None:
         for param_group in moe_param_groups:

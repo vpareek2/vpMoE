@@ -2287,8 +2287,22 @@ def _add_training_args(parser):
     group.add_argument('--qk-clip-threshold', type=float, default=100,
                        help='The balancing threshold for qk-clip.')
     group.add_argument('--optimizer', type=str, default='adam',
-                       choices=['adam', 'sgd'],
+                       choices=['adam', 'sgd', 'normuon'],
                        help='Optimizer function')
+    group.add_argument('--normuon-momentum', type=float, default=0.95,
+                       help='Momentum factor for Normuon.')
+    group.add_argument('--normuon-beta2', type=float, default=0.95,
+                       help='Second-moment factor for Normuon variance reduction.')
+    group.add_argument('--normuon-eps', type=float, default=1e-10,
+                       help='Epsilon for Normuon variance reduction.')
+    group.add_argument('--normuon-aux-lr', type=float, default=None,
+                       help='Optional LR for aux (non-matrix) parameters.')
+    group.add_argument('--normuon-aux-min-lr', type=float, default=None,
+                       help='Optional min LR for aux (non-matrix) parameters.')
+    group.add_argument('--polar-express-safety-factor', type=float, default=2e-2,
+                       help='Safety factor for Polar Express normalization.')
+    group.add_argument('--polar-express-coeffs-path', type=str, default=None,
+                       help='Optional JSON file of Polar Express coefficients.')
     group.add_argument('--optimizer-cpu-offload', action='store_true',
                        help='Offload optimizer state to CPU')
     group.add_argument('--optimizer-offload-fraction', type=float, default=1.0,

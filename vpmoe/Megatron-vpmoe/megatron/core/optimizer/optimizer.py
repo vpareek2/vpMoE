@@ -93,7 +93,31 @@ def _multi_tensor_copy_this_to_that(
             that_.copy_(this_)
 
 
-param_group_identifier_keys = ('wd_mult', 'lr_mult', 'is_expert_parallel', 'is_decoupled_lr')
+param_group_identifier_keys = (
+    'wd_mult',
+    'lr_mult',
+    'is_expert_parallel',
+    'is_decoupled_lr',
+    'use_normuon',
+)
+
+
+def _get_param_group_identifier_value(param_group: Dict[str, Any], key: str) -> Any:
+    if key in param_group:
+        return param_group[key]
+    legacy_key = f"pre_{key}"
+    if legacy_key in param_group:
+        return param_group[legacy_key]
+    if key == "use_normuon":
+        return False
+    raise ValueError(f"Key {key} (or {legacy_key}) not found in param_group {param_group}.")
+
+
+def get_param_group_identifier(param_group: Dict[str, Any]) -> Tuple[Any, ...]:
+    return tuple(
+        _get_param_group_identifier_value(param_group, key)
+        for key in param_group_identifier_keys
+    )
 
 
 class MegatronOptimizer(ABC):
@@ -382,7 +406,7 @@ class MegatronOptimizer(ABC):
     ) -> List[Dict]:
         """Filter and reorder state_dict parameter groups to match current optimizer groups.
         Keys used for matching align with those from _get_param_groups:
-        (wd_mult, lr_mult, is_expert_parallel, is_decoupled_lr)
+        (wd_mult, lr_mult, is_expert_parallel, is_decoupled_lr, use_normuon)
 
         Args:
             current_groups (List[Dict]): Parameter groups from the current optimizer instance.
@@ -395,23 +419,12 @@ class MegatronOptimizer(ABC):
             ValueError: If parameter groups in state dict don't match current optimizer.
         """
         # Define groups order that is needed in the current optimizer (coming from runtime)
-        needed_groups = [
-            # NeMo may have different key for required fields, e.g., "wd_mult" to "pre_wd_mult"
-            tuple(g[key] if key in g else g[f"pre_{key}"] for key in param_group_identifier_keys)
-            for g in current_groups
-        ]
+        needed_groups = [get_param_group_identifier(g) for g in current_groups]
 
         # Keep state_dict param group order since groups are LocalNonpersistentObject
         # and their order is determined at runtime, not from the checkpoint.
         params_in_state_dict_order = [g['params'] for g in state_dict_groups]
-        loaded_groups_map = {
-            tuple(
-                # NeMo may have different key for required fields, e.g., "wd_mult" to "pre_wd_mult"
-                group[key] if key in group else group[f"pre_{key}"]
-                for key in param_group_identifier_keys
-            ): group
-            for group in state_dict_groups
-        }
+        loaded_groups_map = {get_param_group_identifier(group): group for group in state_dict_groups}
 
         final_groups = []
         for key, params in zip(needed_groups, params_in_state_dict_order):

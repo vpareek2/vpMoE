@@ -90,7 +90,23 @@ This makes the maximum lookback distance `W-1` (127 for `W=128`), and avoids the
 
 ## Optimizer (Normuon + Polar Express)
 
-Our baseline optimizer is **Normuon** with **Polar Express**, which Megatron does not provide out of the box. We need to **add this optimizer** (and its required scheduler/param-group behavior) to Megatron’s optimizer stack.
+Our baseline optimizer is **Normuon** with **Polar Express**.
+
+- **Status:** implemented (Normuon for 2D non-embedding weights; AdamW for everything else).
+- **Routing:** any parameter with `is_embedding_or_output_parameter` stays on AdamW; all other 2D matrices use Normuon; 1D/bias params use AdamW.
+- **LR policy:** Normuon uses `--lr`; AdamW uses `--normuon-aux-lr` if set, otherwise `--lr`. Embedding/output can be overridden via `--decoupled-lr`.
+- **Polar Express:** uses the default coefficient table (5 iters, safety factor `2e-2`). For a different safety factor, pass `--polar-express-coeffs-path` with a JSON list of `(a,b,c)` triples computed for your setting.
+- **Constraints:** no distributed optimizer / CPU offload / precision-aware optimizer (DDP is supported).
+
+Example:
+
+```bash
+--optimizer normuon \
+--normuon-aux-lr 1e-4 \
+--normuon-momentum 0.95 \
+--normuon-beta2 0.95 \
+--polar-express-safety-factor 2e-2
+```
 
 ## Notes
 
