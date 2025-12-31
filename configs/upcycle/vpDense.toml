@@ -1,0 +1,24 @@
+# Training config for vpDense (80-layer dense, real student attention/positional).
+
+[job]
+id = "vpDense"
+kind = "train_megatron"
+
+[model]
+object = "vpDense"
+mode = "real"
+
+[tokenizer]
+type = "O200kHarmonyTokenizer"
+vocab_size_padded = 201088
+
+[attention]
+use_rope = false
+use_grape = true
+local_global_schedule = "3_to_1"
+use_tpa = true
+window_size = 128
+
+[io]
+load = "weights/upcycle/vpDense"
+save = "weights/upcycle/vpDense"

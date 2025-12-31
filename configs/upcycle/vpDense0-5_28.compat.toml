@@ -1,0 +1,30 @@
+# Training config for vpDense0-5_28 in "compat" mode.
+#
+# Compat mode exists to reduce architectural shock immediately after tensor surgery:
+# it stays closer to the donor attention/positional behavior (e.g. full attention + RoPE),
+# while keeping the student shapes (8q/2kv, vocab 201088, etc.).
+
+[job]
+id = "vpDense0-5_28.compat"
+kind = "train_megatron"
+
+[model]
+object = "vpDense0-5_28"
+mode = "compat"
+
+[tokenizer]
+type = "O200kHarmonyTokenizer"
+vocab_size_padded = 201088
+
+[attention]
+# Placeholder: finalize once the exact Megatron flags/config surface is wired.
+use_rope = true
+use_grape = false
+local_global_schedule = "full_global"
+use_tpa = false
+window_size = 0
+
+[io]
+load = "weights/upcycle/vpDense0-5_28"
+save = "weights/upcycle/vpDense0-5_28"
+save_tag = "compat_healed"

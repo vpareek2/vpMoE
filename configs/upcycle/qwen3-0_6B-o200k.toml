@@ -1,0 +1,23 @@
+# Convert Qwen3‑0.6B → Qwen3‑0.6B‑o200k (embedding/lm_head only).
+#
+# Produces: object `qwen3-0_6B-o200k` as defined in `configs/upcycle/objects.toml`.
+
+[job]
+id = "qwen3-0_6B-o200k"
+kind = "convert_vocab"
+
+[inputs]
+source_object = "qwen3-0_6B"
+source_path = "weights/qwen3-0_6B"
+
+# The canonical target tokenizer for our stack is o200k Harmony (padded vocab size 201088).
+[tokenizer_target]
+family = "o200k_harmony"
+vocab_size_padded = 201088
+
+# Tokenizer asset and hashing are handled by the Megatron-integrated tokenizer path.
+# This conversion config intentionally does not specify a network fetch.
+
+[outputs]
+output_dir = "weights/upcycle/qwen3-0_6B-o200k"
+write_provenance = true

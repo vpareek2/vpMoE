@@ -6,4 +6,11 @@ ref/
 __pycache__/
 
 *.parquet
+*.safetensors
 data/synth_dev/
+
+# Large local model artifacts (never commit)
+weights/
+
+# If introduced later, keep non-weight run outputs local only.
+artifacts/

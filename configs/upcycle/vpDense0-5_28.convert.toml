@@ -1,0 +1,28 @@
+# Convert Qwen3‑0.6B‑o200k → vpDense0-5_28 (student-shaped dense checkpoint).
+#
+# This is the tensor surgery step (attention geometry, FFN width, embedding untie, etc.).
+
+[job]
+id = "vpDense0-5_28"
+kind = "convert_qwen_to_student_dense"
+
+[inputs]
+source_object = "qwen3-0_6B-o200k"
+source_dir = "weights/upcycle/qwen3-0_6B-o200k"
+
+[student]
+num_layers = 28
+hidden_size = 1024
+num_attention_heads = 8
+num_key_value_heads = 2
+head_dim = 128
+vocab_size_padded = 201088
+untied_embeddings = true
+intermediate_size = "TBD_locked_student_I_target"
+
+[outputs]
+output_dir = "weights/upcycle/vpDense0-5_28"
+write_provenance = true
+
+[determinism]
+seed = 1234

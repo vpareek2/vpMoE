@@ -1,0 +1,25 @@
+# Training config for vpDense0-5_28 in "real" mode (locked student attention/positional).
+
+[job]
+id = "vpDense0-5_28.real"
+kind = "train_megatron"
+
+[model]
+object = "vpDense0-5_28"
+mode = "real"
+
+[tokenizer]
+type = "O200kHarmonyTokenizer"
+vocab_size_padded = 201088
+
+[attention]
+use_rope = false
+use_grape = true
+local_global_schedule = "3_to_1"
+use_tpa = true
+window_size = 128
+
+[io]
+load = "weights/upcycle/vpDense0-5_28"
+save = "weights/upcycle/vpDense0-5_28"
+save_tag = "real_healed"
