@@ -110,6 +110,7 @@ Example:
 
 ## Notes
 
+- Implement **mHC (Manifold-Constrained Hyper-Connections)** in Megatron (CUDA kernel path) and treat it as baseline-required per `docs/architecture.md`. Until mHC is integrated, any “healing/warm-up” runs are not representative of the final model’s training dynamics.
 - Verify `--softmax-type learnable` matches the intended GPT‑OSS-style learnable softmax/logit bias behavior (shape + where it is applied).
 - Verify “always-on shared expert” semantics map cleanly to Megatron’s shared-expert implementation (and that `shared_expert_size=512` corresponds to the right intermediate size).
 - Verify dense warmup + schedules compose correctly (first dense FFN, then MoE layers; plus 3:1 local/global attention schedule).

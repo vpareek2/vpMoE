@@ -182,6 +182,87 @@ This is just “don’t shock the network” engineering.
 
 Even training-free transplantation is not perfect; Arcee explicitly positions this as enabling cross-tokenizer distillation / reuse, not as a magic no-op. ([arcee.ai][7])
 
+### Do we “warm up” after every stage?
+
+Almost — but the key is to keep each warm-up **minimal** and **targeted**:
+
+* If a step creates a real discontinuity (tokenization semantics, tensor shapes, attention pattern, depth, routing), do a short warm-up.
+* Otherwise, just run regressions and move on.
+
+The goal is not “make it smart.” It’s “make it stable enough that the next step is meaningful.”
+
+### Warm-up policy (what to train, and when)
+
+#### A) After tokenizer transplant (`qwen3-0_6B → qwen3-0_6B-o200k`)
+
+Default: **skip** training. Run numeric + special-token regressions (Section 7) and only warm up if they fail.
+
+If you warm up, keep it extremely light:
+
+* **Trainable:** `embed_tokens` and tied `lm_head` only.
+* **Frozen:** everything else.
+* **Loss:** plain NTP/CE (prompt masked; assistant tokens only).
+* **LR:** very low. OMP-initialized embeddings appear sensitive; the OMP paper reports needing a much lower LR for CPT on OMP-initialized models. ([arXiv][4])
+* **Stop:** numeric copy prompts stabilize; no obvious tokenization regressions.
+
+#### B) After tensor surgery (`qwen3-0_6B-o200k → vpDense0-5_28.compat`)
+
+This is a true discontinuity (head geometry + FFN width + sometimes positional behavior). Do a short healing run.
+
+* **Start in compat** (full attn + RoPE, no TPA), so you only absorb *one* shock at a time (Section 2.4).
+* **Trainable:** default = all parameters, but keep embeddings conservative (either frozen or low LR multiplier).
+* **Loss:** plain NTP/CE with prompt masked; include Harmony-structured examples early (below).
+* **Stop:** loss stops spiking; numeric regressions pass; format validity improves.
+
+#### C) After morphing to the real stack (`vpDense0-5_28.compat → vpDense0-5_28.real`)
+
+Treat this as another small shock (RoPE→GRAPE + schedule + TPA):
+
+* Do a **short** stabilization run after the checkpoint-to-checkpoint config switch.
+* Stop as soon as loss re-stabilizes and regressions still pass.
+
+#### D) After depth expansion (`vpDense0-5_28 → vpDense`)
+
+Even with near-identity init, new layers need a short “wake up”:
+
+* **Phase 1:** train only the newly inserted layers (and their norms) for a short window.
+* **Phase 2:** unfreeze all and run briefly to re-equilibrate.
+
+#### E) After dense→MoE (`vpDense → vpMoE`)
+
+This warm-up is effectively your existing “Stage 1 SYNTH warmup CE” (Section 6).
+
+Practical note: upcycling literature finds that a pure “low constant LR” often plateaus; using an LR reset-style schedule can help experts diversify and improve validation loss. ([arXiv][5])
+
+### Suggested “light training” recipes (safe defaults)
+
+These are intentionally conservative. The warm-up goal is *stability*, not capability.
+
+#### Tokenizer transplant warm-up (only if regressions fail)
+
+* **Trainable:** embeddings + tied lm_head only.
+* **Budget:** 10M–50M tokens.
+* **LR:** start extremely low; the OMP paper reports OMP-initialized runs needing much lower LR than other methods for continued pretraining. ([arXiv][4])
+* **Stop:** numeric copy prompts pass reliably; tokenization counts look normal.
+
+#### `vpDense0-5_28.compat` healing run (required)
+
+* **Trainable:** all params (or all-but-embeddings); keep embeddings conservative (frozen or low LR multiplier).
+* **Budget:** 50M–200M tokens, or “until loss stops spiking”.
+* **Schedule:** a short restart (warmup → stable → decay). Avoid a tiny constant LR that never lets the model re-equilibrate.
+* **Stop:** loss stable; numeric regressions pass; Harmony format validity improving.
+
+#### Depth expansion wake-up (`vpDense0-5_28 → vpDense`)
+
+* **Phase 1 (new layers only):** 10M–50M tokens.
+* **Phase 2 (unfreeze all):** 10M–50M tokens.
+* **Stop:** loss stable and no obvious regressions vs the 28-layer checkpoint.
+
+#### Dense→MoE stabilization (`vpDense → vpMoE`)
+
+* Fold into Stage 1 SYNTH warm start (Section 6).
+* Prefer an LR restart-style schedule over “minimum LR forever” to avoid expert collapse / lack of diversification. ([arXiv][5])
+
 ### Minimal healing objective
 
 * plain next-token CE (NTP) is fine

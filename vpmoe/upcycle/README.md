@@ -80,6 +80,7 @@ Notes:
 - For training-free vocab transplant, we use OMP via `ref/mergekit` (`mergekit-tokensurgeon`).
 - OMP requires a donor model that already uses the target vocabulary/tokenizer (we use `weights/gpt-oss-20b`).
 - We patch `ref/mergekit` to avoid hard dependencies on `accelerate`/`peft` for tokensurgeon, and add a minimal architecture definition for GPT‑OSS (`ref/mergekit/mergekit/_data/architectures/gpt_oss.json`).
+- **Default:** do not run training immediately after vocab transplant. Only do a tiny “embeddings+lm_head only” warm-up if numeric/special-token regressions fail (`docs/upcycle.md`).
 
 ### M3 — vpDense0-5_28 (compat) healing run is stable
 
