@@ -31,10 +31,21 @@ vocab_size = 151936
 tie_word_embeddings = true
 
 [[objects]]
+id = "gpt-oss-20b"
+kind = "donor_vocab_reference"
+format = "hf_safetensors"
+local_path = "weights/gpt-oss-20b"
+provenance = "configs/upcycle/provenance/gpt-oss-20b.json"
+
+[objects.model]
+tokenizer_family = "o200k_harmony"
+vocab_size = 201088
+
+[[objects]]
 id = "qwen3-0_6B-o200k"
 kind = "converted"
 format = "hf_safetensors"
-inputs = ["qwen3-0_6B"]
+inputs = ["qwen3-0_6B", "gpt-oss-20b"]
 outputs_under = "weights/upcycle/qwen3-0_6B-o200k"
 config = "configs/upcycle/qwen3-0_6B-o200k.toml"
 

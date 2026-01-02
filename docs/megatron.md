@@ -34,7 +34,7 @@ Example (training / preprocess):
 
 ```bash
 --tokenizer-type O200kHarmonyTokenizer \
---tokenizer-model /opt/data/tokenizers/openai/o200k_base.tiktoken
+--tokenizer-model data/tokenizer/o200k_base.tiktoken
 ```
 
 **Legacy tokenizer path is disabled by default.** If you intentionally need the legacy
@@ -69,7 +69,7 @@ We keep an **opt-in** functional smoke test that runs a tiny `pretrain_gpt.py` j
 GRAPE‑M + GRAPE‑A + window schedule + TPA. Enable it explicitly:
 
 ```bash
-VPMOE_RUN_SMOKE=1 O200K_HARMONY_VOCAB_PATH=/workspace/vpmoe/data/tokenizer/o200k_base.tiktoken \
+VPMOE_RUN_SMOKE=1 O200K_HARMONY_VOCAB_PATH=data/tokenizer/o200k_base.tiktoken \
   uv run pytest -q vpmoe/Megatron-vpmoe/tests/functional_tests/python_test_utils/test_smoke_grape_tpa_pretrain.py
 ```
 

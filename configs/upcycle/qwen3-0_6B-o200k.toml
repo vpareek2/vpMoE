@@ -10,6 +10,11 @@ kind = "convert_vocab"
 source_object = "qwen3-0_6B"
 source_path = "weights/qwen3-0_6B"
 
+# OMP transplantation requires a donor model that already uses the target tokenizer/vocab.
+donor_object = "gpt-oss-20b"
+donor_path = "weights/gpt-oss-20b"
+donor_provenance = "configs/upcycle/provenance/gpt-oss-20b.json"
+
 # The canonical target tokenizer for our stack is o200k Harmony (padded vocab size 201088).
 [tokenizer_target]
 family = "o200k_harmony"
@@ -17,6 +22,15 @@ vocab_size_padded = 201088
 
 # Tokenizer asset and hashing are handled by the Megatron-integrated tokenizer path.
 # This conversion config intentionally does not specify a network fetch.
+
+[method]
+tool = "mergekit-tokensurgeon"
+tool_path = "ref/mergekit"
+tool_git_rev = "e5700008b56860f2768d0c463e9f3178e59f6d64"
+approximation_method = "omp"
+k = 64
+prefix_match = "no"
+byte_match = "no"
 
 [outputs]
 output_dir = "weights/upcycle/qwen3-0_6B-o200k"

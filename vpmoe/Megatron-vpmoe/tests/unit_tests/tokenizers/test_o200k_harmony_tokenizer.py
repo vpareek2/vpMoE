@@ -112,3 +112,33 @@ def test_o200k_harmony_training_builder_uses_core(o200k_vocab_path: Path):
     assert isinstance(tok._tokenizer, O200kHarmonyTokenizer)
     assert tok.vocab["<|end|>"] == 200007
     assert tok.tokenize("<|start|>") == [200006]
+
+
+def test_o200k_harmony_numeric_roundtrip_is_stable(o200k_vocab_path: Path):
+    args = Namespace(
+        tokenizer_type="O200kHarmonyTokenizer",
+        tokenizer_model=str(o200k_vocab_path),
+        tokenizer_metadata=None,
+        vocab_file=None,
+        merges_file=None,
+        tokenizer_special_tokens=None,
+        tiktoken_pattern=None,
+        tiktoken_num_special_tokens=None,
+        vocab_size=None,
+        tokenizer_hf_use_fast=False,
+        trust_remote_code=False,
+        tokenizer_hf_include_special_tokens=False,
+    )
+    tok = build_core_tokenizer(args)
+
+    cases = {
+        "1 2 3 4 5": 64,
+        "1234567890": 64,
+        "1.2345e-10": 64,
+        "2025-08-05": 64,
+        "1/3 = 0.333...": 64,
+    }
+    for text, max_tokens in cases.items():
+        token_ids = tok.tokenize(text)
+        assert 0 < len(token_ids) <= max_tokens
+        assert tok.detokenize(token_ids) == text

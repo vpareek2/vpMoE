@@ -1,0 +1,27 @@
+{
+  "id": "gpt-oss-20b",
+  "source": {
+    "type": "huggingface-git",
+    "repo": "openai/gpt-oss-20b",
+    "remote": "https://huggingface.co/openai/gpt-oss-20b",
+    "revision": "6cee5e81ee83917806bbde320786a8fb61efebee"
+  },
+  "local_path": "weights/gpt-oss-20b",
+  "safetensors": {
+    "index": "model.safetensors.index.json",
+    "total_size_bytes": 13761264768,
+    "shards": [
+      "model-00000-of-00002.safetensors",
+      "model-00001-of-00002.safetensors",
+      "model-00002-of-00002.safetensors"
+    ]
+  },
+  "sha256": {
+    "config.json": "3a2a26ded679375b7928ddeca59764df7cea83220c1961035f6d6e232659e9ce",
+    "tokenizer.json": "0614fe83cadab421296e664e1f48f4261fa8fef6e03e63bb75c20f38e37d07d3",
+    "model.safetensors.index.json": "0e085b977c4c9942f85938828e8c989ed7d5cdabf852e4da6a67c116cd502cd1",
+    "model-00000-of-00002.safetensors": "16d0f997dcfc4462089d536bffe51b4bcea2f872f5c430be09ef8ed392312427",
+    "model-00001-of-00002.safetensors": "4fbe328ab445455d6f58dc73852b85873bd626986310abd91cd4d2ce3245eaea",
+    "model-00002-of-00002.safetensors": "a18106b209e9ab35c3406db4f6f12a927364a058b21e9d1373d682e20674b303"
+  }
+}

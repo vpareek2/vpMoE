@@ -11,3 +11,4 @@ This folder contains the single “source of truth” configs for the upcycling 
 Notes:
 - These `.toml` files are config **artifacts**; the execution harness/wrapper that consumes them is implemented in later milestones.
 - Outputs must be written under `weights/upcycle/` (gitignored) and must include provenance metadata.
+- To materialize `qwen3-0_6B-o200k` today, use `scripts/upcycle/qwen3-0_6B_to_o200k.sh` (OMP via `ref/mergekit`).

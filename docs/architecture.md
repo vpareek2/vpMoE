@@ -37,3 +37,5 @@ This repo is now treating the following as the **baseline configuration** to bui
 ## Archive
 
 Older exploratory writeups and ablation notes live under `docs/research/README.md`.
+### TODO
+mHC: https://arxiv.org/pdf/2512.24880

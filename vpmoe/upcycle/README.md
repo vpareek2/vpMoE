@@ -76,6 +76,11 @@ Deliverables:
 Exit criteria:
 - Checkpoint loads in our Megatron stack and runs a basic forward/loss step.
 
+Notes:
+- For training-free vocab transplant, we use OMP via `ref/mergekit` (`mergekit-tokensurgeon`).
+- OMP requires a donor model that already uses the target vocabulary/tokenizer (we use `weights/gpt-oss-20b`).
+- We patch `ref/mergekit` to avoid hard dependencies on `accelerate`/`peft` for tokensurgeon, and add a minimal architecture definition for GPT‑OSS (`ref/mergekit/mergekit/_data/architectures/gpt_oss.json`).
+
 ### M3 — vpDense0-5_28 (compat) healing run is stable
 
 Deliverables:
