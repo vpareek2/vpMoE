@@ -1,10 +1,10 @@
-[meta]
-# Default vpMoE config (experimental): very fine-grained routed experts.
-# Expected (scripts/param_count_megatron.py): total ~5.36B, active ~769.6M.
-
 [tokenizer]
 # o200k Harmony, padded vocab sizes
 vocab_size = 201088
+
+# Variant: finer-grained MoE (not the locked baseline).
+# Goal: ~6B total, slightly higher top-k, modestly smaller shared expert.
+# Expected (scripts/param_count_megatron.py): total ~5.98B, active ~832M.
 
 [model]
 num_layers = 80
@@ -12,7 +12,7 @@ hidden_size = 1024
 num_attention_heads = 8
 num_query_groups = 2
 head_dim = 128
-ffn_hidden_size = 128
+ffn_hidden_size = 256
 
 normalization = "RMSNorm"
 qk_layernorm = true
@@ -46,10 +46,10 @@ grapem_share_across_heads = true
 grapem_log_freq_scale = 16.0
 
 [moe]
-num_experts = 256
+num_experts = 128
 topk = 4
 shared_expert = true
-shared_expert_size = 512
+shared_expert_size = 384
 
 # First layer dense FFN, remaining layers MoE.
 first_layer_dense = true

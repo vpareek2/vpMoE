@@ -1,6 +1,6 @@
 [meta]
-# Default vpMoE config (experimental): very fine-grained routed experts.
-# Expected (scripts/param_count_megatron.py): total ~5.36B, active ~769.6M.
+# Fine-grained MoE variant that lands near “6B” total params while keeping E=256 and topk=4.
+# Expected (scripts/param_count_megatron.py): total ~6.02B, active ~780.0M.
 
 [tokenizer]
 # o200k Harmony, padded vocab sizes

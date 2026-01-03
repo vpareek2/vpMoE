@@ -1,6 +1,5 @@
 [meta]
-# Default vpMoE config (experimental): very fine-grained routed experts.
-# Expected (scripts/param_count_megatron.py): total ~5.36B, active ~769.6M.
+# Baseline vpMoE config (locked reference). The repo default lives in `configs/vpmoe.toml`.
 
 [tokenizer]
 # o200k Harmony, padded vocab sizes
@@ -12,7 +11,9 @@ hidden_size = 1024
 num_attention_heads = 8
 num_query_groups = 2
 head_dim = 128
-ffn_hidden_size = 128
+
+# Student FFN width (I_target). Keep this identical across vpDense and vpMoE.
+ffn_hidden_size = 512
 
 normalization = "RMSNorm"
 qk_layernorm = true
@@ -21,9 +22,11 @@ softmax_type = "learnable"
 add_bias_linear = true
 add_qkv_bias = false
 
+# If you switch to a gated MLP (e.g. SwiGLU), update ffn_hidden_size accordingly.
 gated_linear_unit = false
 activation = "squaredrelu"
 
+# Untie embeddings for the student.
 untied_embeddings = true
 
 [attention]
@@ -36,6 +39,7 @@ window_attn_skip_freq = 4
 
 [tpa]
 use_tpa = true
+# TPA ranks affect parameter count; keep these pinned for reproducibility.
 tpa_rank = 2
 tpa_q_rank = 4
 
@@ -46,8 +50,8 @@ grapem_share_across_heads = true
 grapem_log_freq_scale = 16.0
 
 [moe]
-num_experts = 256
-topk = 4
+num_experts = 64
+topk = 2
 shared_expert = true
 shared_expert_size = 512
 

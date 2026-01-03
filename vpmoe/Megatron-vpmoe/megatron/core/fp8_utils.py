@@ -3,6 +3,7 @@
 """Utility functions related to FP8 that are used throughout Megatron core"""
 
 import importlib
+import logging
 import weakref
 from contextlib import nullcontext
 from functools import wraps
@@ -22,13 +23,15 @@ from megatron.core.utils import get_te_version, is_te_min_version
 
 # Check if Transformer Engine is installed
 HAVE_TE = False
+_TE_IMPORT_ERROR: Optional[BaseException] = None
 try:
     import transformer_engine  # pylint: disable=W0611
 
     HAVE_TE = True
-except (ImportError, ModuleNotFoundError):
-    # Transformer Engine not found
-    pass
+except Exception as e:  # pylint: disable=broad-except
+    # Transformer Engine not found or is unusable (ABI mismatch, missing symbols, etc.).
+    HAVE_TE = False
+    _TE_IMPORT_ERROR = e
 
 try:
     from packaging.version import Version as PkgVersion
@@ -39,49 +42,64 @@ except ImportError:
 
 # Check if Transformer Engine has class for fp8 tensors.
 HAVE_TE_FP8_TENSOR_CLASS = False
+FP8_TENSOR_CLASS = None
 if HAVE_TE:
-    if is_te_min_version("2.0"):
-        # In TE2.x, QuantizedTensor is the base class for all different type of fp8 tensors,
-        # including fp8 tensor for delayed scaling, current scaling and mxfp8, etc.
-        from transformer_engine.pytorch.tensor import QuantizedTensor as FP8_TENSOR_CLASS
-    else:
-        from transformer_engine.pytorch.float8_tensor import Float8Tensor as FP8_TENSOR_CLASS
+    try:
+        if is_te_min_version("2.0"):
+            # In TE2.x, QuantizedTensor is the base class for all different type of fp8 tensors,
+            # including fp8 tensor for delayed scaling, current scaling and mxfp8, etc.
+            from transformer_engine.pytorch.tensor import QuantizedTensor as FP8_TENSOR_CLASS
+        else:
+            from transformer_engine.pytorch.float8_tensor import Float8Tensor as FP8_TENSOR_CLASS
 
-    HAVE_TE_FP8_TENSOR_CLASS = True
-else:
-    HAVE_TE_FP8_TENSOR_CLASS = False
-    FP8_TENSOR_CLASS = None
+        HAVE_TE_FP8_TENSOR_CLASS = True
+    except Exception as e:  # pylint: disable=broad-except
+        HAVE_TE = False
+        HAVE_TE_FP8_TENSOR_CLASS = False
+        FP8_TENSOR_CLASS = None
+        _TE_IMPORT_ERROR = e
+        logging.warning("TransformerEngine unavailable; disabling TE features: %s", e)
 
 # Check if Transformer Engine has MXFP8Tensor class
 
-try:
-    from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Tensor
+MXFP8Tensor = None
+HAVE_TE_MXFP8TENSOR = False
+if HAVE_TE:
+    try:
+        from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Tensor
 
-    HAVE_TE_MXFP8TENSOR = True
-except (ImportError, ModuleNotFoundError):
-    # MXFP8Tensor not found
-    HAVE_TE_MXFP8TENSOR = False
+        HAVE_TE_MXFP8TENSOR = True
+    except Exception as e:  # pylint: disable=broad-except
+        HAVE_TE_MXFP8TENSOR = False
+        MXFP8Tensor = None
+        _TE_IMPORT_ERROR = e
 
 if HAVE_TE:
-    from megatron.core.extensions.transformer_engine import (
-        TEColumnParallelLinear,
-        TELayerNormColumnParallelLinear,
-        TELinear,
-        TERowParallelLinear,
-    )
+    try:
+        from megatron.core.extensions.transformer_engine import (
+            TEColumnParallelLinear,
+            TELayerNormColumnParallelLinear,
+            TELinear,
+            TERowParallelLinear,
+        )
 
-    TE_LINEAR_TYPES = (
-        TELinear,
-        TEColumnParallelLinear,
-        TERowParallelLinear,
-        TELayerNormColumnParallelLinear,
-    )
+        TE_LINEAR_TYPES = (
+            TELinear,
+            TEColumnParallelLinear,
+            TERowParallelLinear,
+            TELayerNormColumnParallelLinear,
+        )
+    except Exception as e:  # pylint: disable=broad-except
+        HAVE_TE = False
+        TE_LINEAR_TYPES = ()
+        _TE_IMPORT_ERROR = e
+        logging.warning("TransformerEngine unavailable; disabling TE features: %s", e)
 else:
     TE_LINEAR_TYPES = ()
 
 try:
     from megatron.core.extensions.transformer_engine import Fp8Padding, Fp8Unpadding
-except ImportError:
+except Exception:  # pylint: disable=broad-except
     Fp8Padding = None
     Fp8Unpadding = None
 
@@ -89,7 +107,7 @@ try:
     from transformer_engine.pytorch.tensor.utils import (
         post_all_gather_processing as te_post_all_gather_processing,
     )
-except ImportError:
+except Exception:  # pylint: disable=broad-except
     te_post_all_gather_processing = None
 
 

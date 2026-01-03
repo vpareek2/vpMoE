@@ -28,8 +28,38 @@ try:
     from transformer_engine.pytorch.fp8 import FP8GlobalStateManager, fp8_autocast
 
     HAVE_TE = True
-except ModuleNotFoundError:
+    _TE_IMPORT_ERROR: Optional[BaseException] = None
+except Exception as e:  # pylint: disable=broad-except
+    # TransformerEngine may be installed but unusable (e.g., ABI mismatch with torch/cuda),
+    # so treat any import failure as "TE unavailable" and fail fast only if TE features
+    # are explicitly used.
     HAVE_TE = False
+    _TE_IMPORT_ERROR = e
+
+    def _raise_te_unavailable(*_args, **_kwargs):
+        raise ImportError(
+            "TransformerEngine is unavailable in this environment. "
+            "If you intend to use TransformerEngine/FP8/TE RNG tracking, rebuild the container "
+            "with a compatible TE+torch+CUDA stack, or disable TE features."
+        ) from _TE_IMPORT_ERROR
+
+    activation_recompute_forward = _raise_te_unavailable  # type: ignore[assignment]
+
+    class _FP8GlobalStateManagerUnavailable:  # pylint: disable=too-few-public-methods
+        @staticmethod
+        def is_fp8_enabled() -> bool:  # pragma: no cover
+            _raise_te_unavailable()
+
+        @staticmethod
+        def get_fp8_recipe():  # pragma: no cover
+            _raise_te_unavailable()
+
+    FP8GlobalStateManager = _FP8GlobalStateManagerUnavailable  # type: ignore[assignment]
+
+    def fp8_autocast(*, enabled: bool = False, **_kwargs):  # pragma: no cover
+        if enabled:
+            _raise_te_unavailable()
+        return contextlib.nullcontext()
 
 
 # Default name for the model parallel rng tracker.
