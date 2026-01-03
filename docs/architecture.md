@@ -9,7 +9,7 @@ This repo is now treating the following as the **baseline configuration** to bui
 - Depth: **80** layers (**1** dense + **79** MoE)
 - Hidden size: **1024**
 - Attention: **8** heads, **GQA** with **2** KV heads (`num_query_groups=2`), `head_dim=128`
-- Residual connections: **mHC** (Manifold-Constrained Hyper-Connections), CUDA implementation (`n=4`, Sinkhorn iters `t=20` per paper defaults; must match our kernel) https://arxiv.org/pdf/2512.24880
+- Residual connections: **standard residual** (single residual stream; no mHC)
 - Norm: **RMSNorm** (pre-norm), plus **QK-norm**
 - Softmax/logit bias: **learnable per-head softmax offset** (GPT-OSS-style)
 - Local/global attention schedule: **3:1** local:global
