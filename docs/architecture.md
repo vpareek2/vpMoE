@@ -10,6 +10,7 @@ This repo is now treating `configs/vpmoe.toml` as the **locked configuration** t
 - Hidden size: **1024**
 - Attention: **8** heads, **GQA** with **2** KV heads (`num_query_groups=2`), `head_dim=128`
 - Residual connections: **standard residual** (single residual stream; no mHC)
+- Value residual mixing: **enabled** (per-layer learnable `lambda`; for layers >1, `v = lambda * v + (1 - lambda) * v1` where `v1` is layer-1 values)
 - Norm: **RMSNorm** (pre-norm), plus **QK-norm**
 - MLP activation: **ReLU²** (squared ReLU)
 - Softmax/logit bias: **learnable per-head softmax offset** (GPT-OSS-style)

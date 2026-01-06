@@ -19,6 +19,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_vp_first_stage, is_vp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.attention import ValueResidualState
 from megatron.core.transformer.module import GraphableMegatronModule, MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -426,6 +427,9 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         use_inner_quantization_context: bool,
     ):
         """Forward method with activation checkpointing."""
+        value_residual_state = (
+            ValueResidualState() if self.config.value_residual else None
+        )
 
         def custom(start: int, end: int):
             def custom_forward(
@@ -460,6 +464,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             attention_bias=attention_bias,
                             inference_context=None,
                             packed_seq_params=packed_seq_params,
+                            value_residual_state=value_residual_state,
                         )
                 return hidden_states, context
 
@@ -692,6 +697,9 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
             outer_quantization_context = nullcontext()
 
         with rng_context, outer_quantization_context:
+            value_residual_state = (
+                ValueResidualState() if self.config.value_residual else None
+            )
             # Forward pass.
             if self.config.recompute_granularity == 'full' and self.training:
                 hidden_states = self._checkpointed_forward(
@@ -735,6 +743,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             inference_context=inference_context,
                             packed_seq_params=packed_seq_params,
                             sequence_len_offset=sequence_len_offset,
+                            value_residual_state=value_residual_state,
                         )
 
                     if (

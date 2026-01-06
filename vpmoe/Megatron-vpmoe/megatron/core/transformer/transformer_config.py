@@ -137,6 +137,12 @@ class TransformerConfig(ModelParallelConfig):
     apply_residual_connection_post_layernorm: bool = False
     """If True, uses the original BERT residule connection ordering."""
 
+    value_residual: bool = False
+    """Enable value residual mixing with the first layer's attention values."""
+
+    value_residual_init: float = 1.0
+    """Initial lambda for value residual mixing (clamped to (0, 1))."""
+
     layernorm_epsilon: float = 1e-5
     """Epsilon value for any LayerNorm operations."""
 
@@ -901,6 +907,17 @@ class TransformerConfig(ModelParallelConfig):
 
         if self.apply_query_key_layer_scaling:
             self.attention_softmax_in_fp32 = True
+
+        if self.value_residual:
+            if not (0.0 <= self.value_residual_init <= 1.0):
+                raise ValueError(
+                    "value_residual_init must be within [0, 1] when value_residual is enabled."
+                )
+            if self.pipeline_model_parallel_size != 1:
+                raise ValueError(
+                    "value_residual requires pipeline_model_parallel_size == 1 "
+                    "so every layer can access the first-layer values."
+                )
 
         if self.expert_model_parallel_size > 1 and self.num_moe_experts is None:
             raise ValueError("num_moe_experts must be non None to use expert-parallel.")

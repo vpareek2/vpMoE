@@ -450,6 +450,7 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
         inference_context: Optional[Any] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[Tensor] = None,
+        value_residual_state: Optional[Any] = None,
         *,
         inference_params: Optional[Any] = None,
     ):
@@ -517,6 +518,7 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
             attention_bias=attention_bias,
             packed_seq_params=packed_seq_params,
             sequence_len_offset=sequence_len_offset,
+            value_residual_state=value_residual_state,
         )
         nvtx_range_pop(suffix="self_attention")
 

@@ -1,5 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 import copy
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import NoReturn, Optional, Tuple, Union
@@ -121,6 +122,11 @@ class SelfAttentionSubmodules:
     linear_proj: Union[ModuleSpec, type] = None
     q_layernorm: Union[ModuleSpec, type] = None
     k_layernorm: Union[ModuleSpec, type] = None
+
+
+@dataclass
+class ValueResidualState:
+    value: Optional[Tensor] = None
 
 
 @dataclass
@@ -719,6 +725,7 @@ class Attention(MegatronModule, ABC):
         attention_bias: Optional[Tensor] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[int] = None,
+        value_residual_state: Optional[ValueResidualState] = None,
         *,
         inference_params: Optional[BaseInferenceContext] = None,
     ) -> Tuple[Tensor, Tensor]:
@@ -741,6 +748,7 @@ class Attention(MegatronModule, ABC):
             packed_seq_params (Optional[PackedSeqparams]): Parameters used for THD format.
             sequence_len_offset (Optional[int]): Sequence length offset used for
                 inference CUDA graphs.
+            value_residual_state (Optional[ValueResidualState]): State for value residual mixing.
 
         Return:
             (Tuple[Tensor, Tensor]) Attention output and bias.
@@ -755,6 +763,11 @@ class Attention(MegatronModule, ABC):
             rotary_pos_emb = None
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
+
+        if self.config.value_residual and inference_context is not None:
+            raise NotImplementedError(
+                "value_residual does not support inference_context (KV cache) yet."
+            )
 
         if inference_context and inference_context.is_dynamic_batching():
             assert HAVE_FA3 or is_fa_min_version(
@@ -960,6 +973,23 @@ class Attention(MegatronModule, ABC):
             # value_layer = apply_rotary_pos_emb(value_layer, k_pos_emb)
         nvtx_range_pop(suffix="rotary_pos_emb")
 
+        if value_residual_state is not None:
+            if self.attention_type != "self":
+                raise ValueError("value_residual_state is only supported for self attention.")
+            if self.layer_number == 1:
+                value_residual_state.value = value
+            else:
+                if value_residual_state.value is None:
+                    raise ValueError(
+                        "value_residual requires layer 1 to run first so v1 is available."
+                    )
+                if not hasattr(self, "value_residual_logit") or self.value_residual_logit is None:
+                    raise RuntimeError(
+                        "value_residual is enabled but value_residual_logit is missing."
+                    )
+                lambda_value = torch.sigmoid(self.value_residual_logit)
+                value = lambda_value * value + (1.0 - lambda_value) * value_residual_state.value
+
         # ==================================
         # core attention computation
         # ==================================
@@ -1096,6 +1126,16 @@ class SelfAttention(Attention):
             )
         else:
             self.k_layernorm = None
+
+        self.value_residual_logit = None
+        if self.config.value_residual and self.layer_number > 1:
+            init = float(self.config.value_residual_init)
+            eps = 1e-4
+            init = min(max(init, eps), 1.0 - eps)
+            logit = math.log(init / (1.0 - init))
+            self.value_residual_logit = torch.nn.Parameter(
+                torch.tensor(logit, dtype=torch.float32)
+            )
 
     def run_realtime_tests(self):
         """Performs a consistency check.
