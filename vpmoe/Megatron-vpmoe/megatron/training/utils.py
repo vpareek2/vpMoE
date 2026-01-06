@@ -538,11 +538,15 @@ def get_batch_on_this_tp_rank(data_iterator):
             ),
             'position_ids': data["position_ids"].cuda(non_blocking=True),
         }
+        if args.synth_kd_data:
+            batch['span_id'] = data["span_id"].cuda(non_blocking=True)
 
         if args.pipeline_model_parallel_size == 1:
             _broadcast(batch['tokens'])
             _broadcast(batch['labels'])
             _broadcast(batch['loss_mask'])
+            if args.synth_kd_data:
+                _broadcast(batch['span_id'])
             _broadcast(batch['attention_mask'])
             _broadcast(batch['position_ids'])
 
@@ -560,6 +564,8 @@ def get_batch_on_this_tp_rank(data_iterator):
                 _broadcast(batch['position_ids'])
             _broadcast(batch['labels'])
             _broadcast(batch['loss_mask'])
+            if args.synth_kd_data:
+                _broadcast(batch['span_id'])
             _broadcast(batch['attention_mask'])
 
     else:
@@ -579,6 +585,13 @@ def get_batch_on_this_tp_rank(data_iterator):
             dtype=torch.float32,
             device=torch.cuda.current_device(),
         )
+        span_id = None
+        if args.synth_kd_data:
+            span_id = torch.empty(
+                (args.micro_batch_size, args.seq_length),
+                dtype=torch.int64,
+                device=torch.cuda.current_device(),
+            )
         if args.create_attention_mask_in_dataloader:
             attention_mask = torch.empty(
                 (args.micro_batch_size, 1, args.seq_length, args.seq_length),
@@ -597,12 +610,15 @@ def get_batch_on_this_tp_rank(data_iterator):
             _broadcast(tokens)
             _broadcast(labels)
             _broadcast(loss_mask)
+            if args.synth_kd_data:
+                _broadcast(span_id)
             _broadcast(attention_mask)
             _broadcast(position_ids)
 
         elif mpu.is_pipeline_first_stage():
             labels = None
             loss_mask = None
+            span_id = None
 
             _broadcast(tokens)
             _broadcast(attention_mask)
@@ -621,6 +637,8 @@ def get_batch_on_this_tp_rank(data_iterator):
 
             _broadcast(labels)
             _broadcast(loss_mask)
+            if args.synth_kd_data:
+                _broadcast(span_id)
             _broadcast(attention_mask)
 
         batch = {
@@ -630,6 +648,8 @@ def get_batch_on_this_tp_rank(data_iterator):
             'attention_mask': attention_mask,
             'position_ids': position_ids,
         }
+        if args.synth_kd_data:
+            batch['span_id'] = span_id
 
     return batch
 

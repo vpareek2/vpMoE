@@ -20,6 +20,7 @@ from megatron.core.utils import StragglerDetector, get_attr_wrapped_model
 from megatron.training import get_args, get_timers, get_tokenizer, inprocess_restart, pretrain, print_rank_0
 from megatron.training.datasets.sft_dataset import SFTDataset
 from megatron.training.datasets.fim_dataset import GPTFIMDataset, GPTFIMDatasetConfig
+from megatron.training.datasets.synth_kd_dataset import SynthKDDataset
 from megatron.training.utils import (
     get_batch_on_this_cp_rank,
     get_batch_on_this_tp_rank,
@@ -43,7 +44,7 @@ def get_batch(data_iterator, vp_stage=None):
     """Generate a batch."""
     # TODO: this is pretty hacky, find a better way
     if not is_first_or_last_pipeline_stage(vp_stage):
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     # get batches based on the TP rank you are on
     batch = get_batch_on_this_tp_rank(data_iterator)
@@ -51,7 +52,14 @@ def get_batch(data_iterator, vp_stage=None):
     # slice batch along sequence dimension for context parallelism
     batch = get_batch_on_this_cp_rank(batch)
 
-    return batch.values()
+    return (
+        batch["tokens"],
+        batch["labels"],
+        batch["loss_mask"],
+        batch["attention_mask"],
+        batch["position_ids"],
+        batch.get("span_id"),
+    )
 
 
 # define spiky loss as a loss that's 10x the max loss observed
@@ -59,7 +67,10 @@ SPIKY_LOSS_FACTOR = 10
 
 
 def loss_func(
-    loss_mask: torch.Tensor, output_tensor: torch.Tensor, model: Optional[GPTModel] = None
+    loss_mask: torch.Tensor,
+    output_tensor: torch.Tensor,
+    span_id: Optional[torch.Tensor] = None,
+    model: Optional[GPTModel] = None,
 ):
     """Loss function.
 
@@ -76,7 +87,51 @@ def loss_func(
     """
     args = get_args()
 
-    if has_nvidia_modelopt and getattr(args, 'modelopt_enabled', False):  # [ModelOpt]
+    if args.synth_kd_data:
+        if span_id is None:
+            raise RuntimeError("Synth KD requires span_id in the batch.")
+        if has_nvidia_modelopt and getattr(args, "modelopt_enabled", False):
+            raise RuntimeError("Synth KD span loss does not support ModelOpt losses.")
+
+        losses = output_tensor.view(-1).float()
+        loss_mask = loss_mask.view(-1).float()
+        span_id = span_id.view(-1)
+
+        mask_reasoning = loss_mask * (span_id == 1).float()
+        mask_final = loss_mask * (span_id == 2).float()
+
+        sum_reasoning = torch.sum(losses * mask_reasoning)
+        sum_final = torch.sum(losses * mask_final)
+        count_reasoning = mask_reasoning.sum()
+        count_final = mask_final.sum()
+
+        mean_reasoning = sum_reasoning / torch.clamp(count_reasoning, min=1.0)
+        mean_final = sum_final / torch.clamp(count_final, min=1.0)
+
+        combined_mean = (
+            args.kd_span_weight_reasoning * mean_reasoning
+            + args.kd_span_weight_final * mean_final
+        )
+        num_tokens_float = count_reasoning + count_final
+        loss = combined_mean * num_tokens_float
+
+        num_tokens = num_tokens_float.clone().detach().to(torch.int)
+        report = {
+            "lm loss": torch.cat([loss.clone().detach().view(1), num_tokens.view(1)]),
+            "reasoning loss": torch.cat(
+                [sum_reasoning.clone().detach().view(1), count_reasoning.view(1)]
+            ),
+            "final loss": torch.cat(
+                [sum_final.clone().detach().view(1), count_final.view(1)]
+            ),
+            "reasoning tokens": torch.cat(
+                [count_reasoning.clone().detach().view(1), torch.ones_like(count_reasoning).view(1)]
+            ),
+            "final tokens": torch.cat(
+                [count_final.clone().detach().view(1), torch.ones_like(count_final).view(1)]
+            ),
+        }
+    elif has_nvidia_modelopt and getattr(args, 'modelopt_enabled', False):  # [ModelOpt]
         loss, num_tokens, report = loss_func_modelopt(loss_mask, output_tensor, model=model)
     else:
         losses = output_tensor.view(-1).float()
@@ -136,7 +191,9 @@ def forward_step(data_iterator, model: GPTModel, return_schedule_plan: bool = Fa
     global stimer
     with stimer(bdata=True):
         vp_stage = get_attr_wrapped_model(model, "vp_stage")
-        tokens, labels, loss_mask, attention_mask, position_ids = get_batch(data_iterator, vp_stage)
+        tokens, labels, loss_mask, attention_mask, position_ids, span_id = get_batch(
+            data_iterator, vp_stage
+        )
     timers('batch-generator').stop()
 
     with stimer:
@@ -149,14 +206,14 @@ def forward_step(data_iterator, model: GPTModel, return_schedule_plan: bool = Fa
                 schedule_plan = model.build_schedule_plan(
                     tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask
                 )
-                return schedule_plan, partial(loss_func, loss_mask, model=model)
+                return schedule_plan, partial(loss_func, loss_mask, span_id=span_id, model=model)
             else:
                 output_tensor = model(
                     tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask
                 )
 
     # [ModelOpt]: model is needed to access ModelOpt distillation losses
-    return output_tensor, partial(loss_func, loss_mask, model=model)
+    return output_tensor, partial(loss_func, loss_mask, span_id=span_id, model=model)
 
 
 def is_dataset_built_on_rank(vp_stage=None):
@@ -244,6 +301,8 @@ def train_valid_test_datasets_provider(train_val_test_num_samples, vp_stage=None
             dataset_type = MockGPTDataset
         elif args.fim_data:
             dataset_type = GPTFIMDataset
+        elif args.synth_kd_data:
+            dataset_type = SynthKDDataset
         else:
             dataset_type = GPTDataset
 

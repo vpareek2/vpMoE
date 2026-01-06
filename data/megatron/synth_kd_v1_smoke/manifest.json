@@ -1,0 +1,227 @@
+{
+  "schema_version": "synth_kd_v1",
+  "created_unix_s": 1767671515,
+  "git_sha": null,
+  "config_hash": "faa2ee2ea0adc1b2dc2f171d31e4ab4d6b6a3a320d09a35776cceb34c006ecdc",
+  "input": {
+    "dataset_dir": "data/synth_harmony",
+    "manifest_path": "data/synth_harmony/manifest.json",
+    "manifest_sha256": "ace21923e385fa898eda8e81d081bb4b45644339c437c075201b45ff6c567383",
+    "glob": "synth_harmony_shard_*.parquet"
+  },
+  "renderer": {
+    "library": "openai-harmony",
+    "version": "0.0.8",
+    "auto_drop_analysis": false,
+    "roles_preserved": [
+      "system",
+      "developer",
+      "user",
+      "assistant"
+    ]
+  },
+  "tokenizer": {
+    "type": "O200kHarmonyTokenizer",
+    "model_path": "data/tokenizer/o200k_base.tiktoken",
+    "model_sha256": "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
+    "vocab_size": 201088
+  },
+  "config": {
+    "valid_fraction": 0.1,
+    "hash": "blake2b-8",
+    "loss_mask_alignment": "labels_shifted_with_pad",
+    "eod_token_id": 199999,
+    "roles_preserved": [
+      "system",
+      "developer",
+      "user",
+      "assistant"
+    ],
+    "assistant_channels": [
+      "analysis",
+      "final"
+    ]
+  },
+  "splits": {
+    "train": {
+      "rows": 888,
+      "tokens": 762674,
+      "shards": [
+        {
+          "name": "shard_00",
+          "rows": 219,
+          "tokens": 189817,
+          "paths": {
+            "tokens_bin": "data/megatron/synth_kd_v1_smoke/train/shard_00_tokens.bin",
+            "tokens_idx": "data/megatron/synth_kd_v1_smoke/train/shard_00_tokens.idx",
+            "lossmask_bin": "data/megatron/synth_kd_v1_smoke/train/shard_00_lossmask.bin",
+            "lossmask_idx": "data/megatron/synth_kd_v1_smoke/train/shard_00_lossmask.idx",
+            "span_bin": "data/megatron/synth_kd_v1_smoke/train/shard_00_span.bin",
+            "span_idx": "data/megatron/synth_kd_v1_smoke/train/shard_00_span.idx"
+          },
+          "bytes": {
+            "tokens_bin": 759268,
+            "tokens_idx": 4422,
+            "lossmask_bin": 189817,
+            "lossmask_idx": 4422,
+            "span_bin": 189817,
+            "span_idx": 4422
+          }
+        },
+        {
+          "name": "shard_01",
+          "rows": 221,
+          "tokens": 186605,
+          "paths": {
+            "tokens_bin": "data/megatron/synth_kd_v1_smoke/train/shard_01_tokens.bin",
+            "tokens_idx": "data/megatron/synth_kd_v1_smoke/train/shard_01_tokens.idx",
+            "lossmask_bin": "data/megatron/synth_kd_v1_smoke/train/shard_01_lossmask.bin",
+            "lossmask_idx": "data/megatron/synth_kd_v1_smoke/train/shard_01_lossmask.idx",
+            "span_bin": "data/megatron/synth_kd_v1_smoke/train/shard_01_span.bin",
+            "span_idx": "data/megatron/synth_kd_v1_smoke/train/shard_01_span.idx"
+          },
+          "bytes": {
+            "tokens_bin": 746420,
+            "tokens_idx": 4462,
+            "lossmask_bin": 186605,
+            "lossmask_idx": 4462,
+            "span_bin": 186605,
+            "span_idx": 4462
+          }
+        },
+        {
+          "name": "shard_02",
+          "rows": 223,
+          "tokens": 192866,
+          "paths": {
+            "tokens_bin": "data/megatron/synth_kd_v1_smoke/train/shard_02_tokens.bin",
+            "tokens_idx": "data/megatron/synth_kd_v1_smoke/train/shard_02_tokens.idx",
+            "lossmask_bin": "data/megatron/synth_kd_v1_smoke/train/shard_02_lossmask.bin",
+            "lossmask_idx": "data/megatron/synth_kd_v1_smoke/train/shard_02_lossmask.idx",
+            "span_bin": "data/megatron/synth_kd_v1_smoke/train/shard_02_span.bin",
+            "span_idx": "data/megatron/synth_kd_v1_smoke/train/shard_02_span.idx"
+          },
+          "bytes": {
+            "tokens_bin": 771464,
+            "tokens_idx": 4502,
+            "lossmask_bin": 192866,
+            "lossmask_idx": 4502,
+            "span_bin": 192866,
+            "span_idx": 4502
+          }
+        },
+        {
+          "name": "shard_03",
+          "rows": 225,
+          "tokens": 193386,
+          "paths": {
+            "tokens_bin": "data/megatron/synth_kd_v1_smoke/train/shard_03_tokens.bin",
+            "tokens_idx": "data/megatron/synth_kd_v1_smoke/train/shard_03_tokens.idx",
+            "lossmask_bin": "data/megatron/synth_kd_v1_smoke/train/shard_03_lossmask.bin",
+            "lossmask_idx": "data/megatron/synth_kd_v1_smoke/train/shard_03_lossmask.idx",
+            "span_bin": "data/megatron/synth_kd_v1_smoke/train/shard_03_span.bin",
+            "span_idx": "data/megatron/synth_kd_v1_smoke/train/shard_03_span.idx"
+          },
+          "bytes": {
+            "tokens_bin": 773544,
+            "tokens_idx": 4542,
+            "lossmask_bin": 193386,
+            "lossmask_idx": 4542,
+            "span_bin": 193386,
+            "span_idx": 4542
+          }
+        }
+      ]
+    },
+    "valid": {
+      "rows": 112,
+      "tokens": 93464,
+      "shards": [
+        {
+          "name": "shard_00",
+          "rows": 31,
+          "tokens": 25876,
+          "paths": {
+            "tokens_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_00_tokens.bin",
+            "tokens_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_00_tokens.idx",
+            "lossmask_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_00_lossmask.bin",
+            "lossmask_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_00_lossmask.idx",
+            "span_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_00_span.bin",
+            "span_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_00_span.idx"
+          },
+          "bytes": {
+            "tokens_bin": 103504,
+            "tokens_idx": 662,
+            "lossmask_bin": 25876,
+            "lossmask_idx": 662,
+            "span_bin": 25876,
+            "span_idx": 662
+          }
+        },
+        {
+          "name": "shard_01",
+          "rows": 29,
+          "tokens": 22874,
+          "paths": {
+            "tokens_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_01_tokens.bin",
+            "tokens_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_01_tokens.idx",
+            "lossmask_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_01_lossmask.bin",
+            "lossmask_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_01_lossmask.idx",
+            "span_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_01_span.bin",
+            "span_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_01_span.idx"
+          },
+          "bytes": {
+            "tokens_bin": 91496,
+            "tokens_idx": 622,
+            "lossmask_bin": 22874,
+            "lossmask_idx": 622,
+            "span_bin": 22874,
+            "span_idx": 622
+          }
+        },
+        {
+          "name": "shard_02",
+          "rows": 27,
+          "tokens": 22998,
+          "paths": {
+            "tokens_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_02_tokens.bin",
+            "tokens_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_02_tokens.idx",
+            "lossmask_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_02_lossmask.bin",
+            "lossmask_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_02_lossmask.idx",
+            "span_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_02_span.bin",
+            "span_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_02_span.idx"
+          },
+          "bytes": {
+            "tokens_bin": 91992,
+            "tokens_idx": 582,
+            "lossmask_bin": 22998,
+            "lossmask_idx": 582,
+            "span_bin": 22998,
+            "span_idx": 582
+          }
+        },
+        {
+          "name": "shard_03",
+          "rows": 25,
+          "tokens": 21716,
+          "paths": {
+            "tokens_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_03_tokens.bin",
+            "tokens_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_03_tokens.idx",
+            "lossmask_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_03_lossmask.bin",
+            "lossmask_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_03_lossmask.idx",
+            "span_bin": "data/megatron/synth_kd_v1_smoke/valid/shard_03_span.bin",
+            "span_idx": "data/megatron/synth_kd_v1_smoke/valid/shard_03_span.idx"
+          },
+          "bytes": {
+            "tokens_bin": 86864,
+            "tokens_idx": 542,
+            "lossmask_bin": 21716,
+            "lossmask_idx": 542,
+            "span_bin": 21716,
+            "span_idx": 542
+          }
+        }
+      ]
+    }
+  }
+}

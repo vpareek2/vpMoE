@@ -1083,6 +1083,18 @@ def validate_args(args, defaults={}):
            any([args.train_data_path, args.valid_data_path, args.test_data_path]) \
            <= 1, "A single data source must be provided in training mode, else None"
 
+    if args.synth_kd_data:
+        assert not args.mock_data, "Mock dataset is not supported with Synth KD."
+        assert not args.legacy_tokenizer, "Synth KD requires the O200k Harmony tokenizer."
+        assert not args.fim_data, "Synth KD cannot be combined with FIM dataset."
+        assert not args.sft, "Synth KD cannot be combined with SFT dataset."
+        assert args.tokenizer_type == "O200kHarmonyTokenizer", (
+            "Synth KD requires --tokenizer-type O200kHarmonyTokenizer."
+        )
+        assert args.tokenizer_model, "Synth KD requires --tokenizer-model pointing to o200k_base.tiktoken."
+        assert args.kd_span_weight_reasoning >= 0, "kd-span-weight-reasoning must be >= 0."
+        assert args.kd_span_weight_final >= 0, "kd-span-weight-final must be >= 0."
+
     if args.fim_data:
         extra_tokens = [
             args.fim_prefix_token,
@@ -3030,6 +3042,23 @@ def _add_data_args(parser):
                        help='FIM PAD token')
     group.add_argument('--fim-eod-token', type=str, default='<|endoftext|>',
                        help='FIM EOD token')
+    group.add_argument(
+        '--synth-kd-data',
+        action='store_true',
+        help='Use SYNTH KD dataset with loss/span sidecars.',
+    )
+    group.add_argument(
+        '--kd-span-weight-reasoning',
+        type=float,
+        default=1.0,
+        help='Reasoning span weight for span-normalized KD loss.',
+    )
+    group.add_argument(
+        '--kd-span-weight-final',
+        type=float,
+        default=1.0,
+        help='Final span weight for span-normalized KD loss.',
+    )
     return parser
 
 

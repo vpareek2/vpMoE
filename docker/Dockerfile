@@ -28,6 +28,6 @@ RUN uv sync --frozen --no-install-project
 
 COPY . /workspace/vpmoe
 
-ENV PYTHONPATH=/workspace/vpmoe:/workspace/vpmoe/vpmoe/Megatron-LM
+ENV PYTHONPATH=/workspace/vpmoe:/workspace/vpmoe/vpmoe/Megatron-vpmoe
 
 CMD ["/bin/bash"]

@@ -38,7 +38,7 @@ Those come after the base distillation is working and profiled.
 
 ### Student
 
-* vpMoE locked architecture (80 layers, 64 experts top‑2, etc.)
+* vpMoE locked architecture (see `docs/architecture.md`; 80 layers, 256 experts top‑4, 1 shared expert, etc.)
 * **Tokenizer / vocab:** same as GPT‑OSS (**o200k Harmony**, padded to 201088)
 * **We emit reasoning** at inference (train reasoning channel explicitly).
 
@@ -56,6 +56,8 @@ Those come after the base distillation is working and profiled.
 ---
 
 ## Data Representation
+
+Implementation decisions for the SYNTH KD dataset build (format, masking, split, and Megatron layout) live in `docs/data_pipeline.md`.
 
 ### Convert each SYNTH row to Harmony conversation
 
@@ -75,6 +77,7 @@ We serialize into Harmony/chat structure:
 ### Loss masking
 
 * **Mask out user tokens** (no loss on prompt).
+* If present, **mask out `system` and `developer` tokens** as prompt context (not supervised targets).
 * Compute loss only on assistant tokens:
 
   * reasoning span tokens

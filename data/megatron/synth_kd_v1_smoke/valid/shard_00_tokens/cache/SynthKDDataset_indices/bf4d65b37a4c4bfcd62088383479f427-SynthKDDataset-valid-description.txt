@@ -1,0 +1,14 @@
+{
+    "class": "SynthKDDataset",
+    "dataset_path": "/workspace/vpmoe/data/megatron/synth_kd_v1_smoke/valid/shard_00_tokens",
+    "num_samples": 0,
+    "index_split": "valid",
+    "random_seed": 1234,
+    "sequence_length": 128,
+    "split": null,
+    "split_matrix": null,
+    "tokenizer": {
+        "class": "megatron.core.tokenizers.text.models.default_tokenizer.DefaultTokenizerText",
+        "tokenizer_path": "/workspace/vpmoe/data/tokenizer/o200k_base.tiktoken"
+    }
+}

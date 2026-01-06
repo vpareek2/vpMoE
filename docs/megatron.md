@@ -44,7 +44,8 @@ use the core tokenizer stack.
 ### Data pipeline (SYNTH → Harmony → Megatron datasets)
 
 - **Status:** TODO (needs implementation + end-to-end testing).
-- Goal: deterministic `.bin/.idx` dataset builds from Harmony conversations using `O200kHarmonyTokenizer`, including loss masks and reasoning/final span masks per `docs/distillation_strategy.md`.
+- Source-of-truth decisions and invariants: `docs/data_pipeline.md`.
+- Goal: deterministic `.bin/.idx` dataset builds from Harmony conversations using `O200kHarmonyTokenizer`, including prompt loss masks and reasoning/final span IDs per `docs/distillation_strategy.md`.
 
 ## GRAPE (positional encoding)
 
@@ -72,6 +73,9 @@ GRAPE‑M + GRAPE‑A + window schedule + TPA. Enable it explicitly:
 VPMOE_RUN_SMOKE=1 O200K_HARMONY_VOCAB_PATH=data/tokenizer/o200k_base.tiktoken \
   uv run pytest -q vpmoe/Megatron-vpmoe/tests/functional_tests/python_test_utils/test_smoke_grape_tpa_pretrain.py
 ```
+
+Note: if `transformer_engine` is not installed in the container env, run training with
+`--transformer-impl local` (TransformerEngine is performance-optional, not correctness-required).
 
 ### Sliding-window semantics (avoid off-by-one)
 

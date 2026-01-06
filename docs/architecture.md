@@ -24,7 +24,7 @@ This repo is now treating `configs/vpmoe.toml` as the **locked configuration** t
 - Routing: **topk=4**
 - Shared expert: **1 shared expert** (always-on), `shared_expert_size=512`
 - Dense warmup: first layer uses dense FFN; remaining layers use MoE FFN
-- Routed expert FFN width: `ffn_hidden_size=112`
+- Routed expert FFN width: `ffn_hidden_size=128`
 
 ### Tokenizer / Vocab
 
@@ -33,9 +33,9 @@ This repo is now treating `configs/vpmoe.toml` as the **locked configuration** t
 
 ### Parameter Budget (from `scripts/param_count_megatron.py`)
 
-- Total params: **~5.36B**
-- Active params (all): **~769.6M**
-- Active params (non-embed): **~357.8M**
+- Total params: **~6.02B**
+- Active params (all): **~780.0M**
+- Active params (non-embed): **~368.2M**
 
 To recompute parameter counts, run `python3 scripts/param_count_megatron.py --config configs/vpmoe.toml`.
 

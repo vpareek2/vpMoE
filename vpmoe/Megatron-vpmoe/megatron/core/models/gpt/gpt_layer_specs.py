@@ -187,6 +187,11 @@ def get_gpt_layer_with_transformer_engine_spec(
     use_kitchen_attention: bool = False,
     kitchen_attention_backend: str = "sdpa",
 ) -> ModuleSpec:
+    if not HAVE_TE:
+        raise RuntimeError(
+            "Requested --transformer-impl transformer_engine, but transformer_engine is not available. "
+            "Either install TransformerEngine in the container, or pass --transformer-impl local."
+        )
     """Use this spec to use lower-level Transformer Engine modules (required for fp8 training).
 
 
@@ -504,6 +509,11 @@ def get_gpt_layer_with_transformer_engine_spec_with_tpa(
     use_kitchen_attention: bool = False,
     kitchen_attention_backend: str = "sdpa",
 ) -> ModuleSpec:
+    if not HAVE_TE:
+        raise RuntimeError(
+            "Requested --transformer-impl transformer_engine, but transformer_engine is not available. "
+            "Either install TransformerEngine in the container, or pass --transformer-impl local."
+        )
     """Transformer-Engine spec layer using TPA for attention projections."""
 
     assert not multi_latent_attention, "TPA is not supported with MLA."
