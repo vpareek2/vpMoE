@@ -59,6 +59,15 @@ Those come after the base distillation is working and profiled.
 
 Implementation decisions for the SYNTH KD dataset build (format, masking, split, and Megatron layout) live in `docs/data_pipeline.md`.
 
+### Truncation policy (Harmony conversations)
+
+For KD, we use **structured truncation** (not Megatron’s generic “split anywhere” slicing):
+
+- Preserve the last assistant `final` message in full. If the final message alone cannot fit in `seq_len`, drop the example.
+- Prefer truncating `analysis` first (keep the `analysis` header, truncate its content from the left), then truncate the user prompt content from the left if still needed.
+
+Rationale: avoid creating training chunks that begin mid-message without the Harmony headers/channels, and preserve answer supervision.
+
 ### Convert each SYNTH row to Harmony conversation
 
 Fields available in SYNTH:
@@ -109,12 +118,12 @@ Then:
 L_{\text{CE}} = w_r \cdot CE_{\text{reasoning}} + w_f \cdot CE_{\text{final}}
 ]
 
-**Default weights:**
+**Default weights (base KD / warm start):**
 
 * `w_r = 1.0`
 * `w_f = 1.0`
 
-(If you later see rambling reasoning / weak answers, shift toward final slightly, e.g., `w_r=0.8, w_f=1.2`.)
+Note: these span weights are part of the broader learning curriculum and may change by phase (e.g., down-weight reasoning later, or schedule weights).
 
 ---
 

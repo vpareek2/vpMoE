@@ -7,7 +7,10 @@ from typing import Optional
 import torch
 from torch import nn
 
-from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+from megatron.core.tensor_parallel.layers import (
+    ColumnParallelLinear,
+    set_tensor_model_parallel_attributes,
+)
 from megatron.core.utils import divide, get_pg_size, get_tensor_model_parallel_group_if_none
 
 
@@ -32,8 +35,6 @@ class TPALinearQKV(nn.Module):
 
         if gather_output:
             raise ValueError("TPALinearQKV does not support gather_output=True.")
-        if bias:
-            raise ValueError("TPALinearQKV does not support bias.")
         if skip_bias_add:
             raise ValueError("TPALinearQKV does not support skip_bias_add.")
         if config.tpa_rank is None or config.tpa_q_rank is None:
@@ -67,6 +68,7 @@ class TPALinearQKV(nn.Module):
             raise ValueError(
                 f"TPALinearQKV expected output_size={expected_output}, got {output_size}."
             )
+        self.output_size_per_partition = divide(expected_output, world_size)
 
         self.linear_a_q = ColumnParallelLinear(
             input_size,
@@ -144,6 +146,31 @@ class TPALinearQKV(nn.Module):
             tp_group=self.tp_group,
         )
 
+        if bias:
+            if config.use_cpu_initialization:
+                self.bias = nn.Parameter(
+                    torch.empty(self.output_size_per_partition, dtype=config.params_dtype)
+                )
+            else:
+                self.bias = nn.Parameter(
+                    torch.empty(
+                        self.output_size_per_partition,
+                        device=torch.cuda.current_device(),
+                        dtype=config.params_dtype,
+                    )
+                )
+            set_tensor_model_parallel_attributes(self.bias, True, 0, 1)
+            if config.perform_initialization:
+                with torch.no_grad():
+                    self.bias.zero_()
+            setattr(
+                self.bias,
+                "allreduce",
+                not (is_expert and config.expert_model_parallel_size > 1),
+            )
+        else:
+            self.register_parameter("bias", None)
+
     def forward(self, hidden_states):
         # hidden_states: [s, b, h]
         seq_len, batch_size, _ = hidden_states.shape
@@ -187,6 +214,8 @@ class TPALinearQKV(nn.Module):
         q = q.reshape(seq_len, batch_size, self.num_query_groups_per_partition, heads_per_group * self.head_dim)
 
         mixed_qkv = torch.cat([q, k, v], dim=3).reshape(seq_len, batch_size, -1)
+        if self.bias is not None:
+            mixed_qkv = mixed_qkv + self.bias
         return mixed_qkv, None
 
     def backward_dw(self) -> None:

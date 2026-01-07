@@ -77,6 +77,22 @@ VPMOE_RUN_SMOKE=1 O200K_HARMONY_VOCAB_PATH=data/tokenizer/o200k_base.tiktoken \
 Note: if `transformer_engine` is not installed in the container env, run training with
 `--transformer-impl local` (TransformerEngine is performance-optional, not correctness-required).
 
+## Profiling (nsys / torch profiler)
+
+We keep one canonical profiling entrypoint: `scripts/profile.sh`.
+
+It instantiates the **full vpMoE** architecture from `configs/vpmoe.toml` and runs a short
+`pretrain_gpt.py --mock-data` job with Megatron’s built-in profiling window (`--profile-step-start/end`).
+
+Example (Nsight Systems, single GPU):
+
+```bash
+PROFILE_TOOL=nsys PROFILE_NPROC_PER_NODE=1 PROFILE_SEQ_LEN=4096 \
+  scripts/profile.sh
+```
+
+For EP profiling, set `PROFILE_EP>1` and increase `PROFILE_NPROC_PER_NODE` accordingly.
+
 ### Sliding-window semantics (avoid off-by-one)
 
 We treat the configured window size (**128**) as **window span length in tokens, including the current token**.
@@ -117,3 +133,4 @@ Example:
 - Verify `--softmax-type learnable` matches the intended GPT‑OSS-style learnable softmax/logit bias behavior (shape + where it is applied).
 - Verify “always-on shared expert” semantics map cleanly to Megatron’s shared-expert implementation (and that `shared_expert_size=512` corresponds to the right intermediate size).
 - Verify dense warmup + schedules compose correctly (first dense FFN, then MoE layers; plus 3:1 local/global attention schedule).
+- GPT‑OSS bias parity: enable linear biases globally (`--add-qkv-bias` + default `add_bias_linear=true`) to match attention + MLP bias usage.

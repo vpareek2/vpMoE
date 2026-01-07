@@ -14,6 +14,7 @@ This repo is now treating `configs/vpmoe.toml` as the **locked configuration** t
 - Norm: **RMSNorm** (pre-norm), plus **QK-norm**
 - MLP activation: **ReLU²** (squared ReLU)
 - Softmax/logit bias: **learnable per-head softmax offset** (GPT-OSS-style)
+- Linear biases: **enabled** (GPT‑OSS parity), including attention projections and MLPs
 - Local/global attention schedule: **3:1** local:global
 - Local attention: sliding-window **TPA**, window **128**
 - Global attention: full causal **GQA**
@@ -22,7 +23,13 @@ This repo is now treating `configs/vpmoe.toml` as the **locked configuration** t
 ### MoE Hyperparameters
 
 - Experts: **256**
-- Routing: **topk=4**
+- Routing: **DeepSeek‑V3 router** (Megatron-Core)
+  - **topk=4**
+  - Group-limited routing: `num_groups=8`, `group_topk=4`
+  - Score function: `sigmoid`, `topk_scaling_factor=2.5`
+  - Load balancing: `seq_aux_loss` with `aux_loss_coeff=1e-4`
+  - Expert bias: enabled, `bias_update_rate=1e-3`
+  - Router dtype: fp32
 - Shared expert: **1 shared expert** (always-on), `shared_expert_size=512`
 - Dense warmup: first layer uses dense FFN; remaining layers use MoE FFN
 - Routed expert FFN width: `ffn_hidden_size=128`

@@ -19,7 +19,7 @@ qk_layernorm = true
 softmax_type = "learnable"
 
 add_bias_linear = true
-add_qkv_bias = false
+add_qkv_bias = true
 
 gated_linear_unit = false
 activation = "squaredrelu"

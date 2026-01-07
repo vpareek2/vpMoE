@@ -123,3 +123,73 @@ def test_tpa_linear_qkv_matches_reference():
 
     assert mixed.shape == mixed_ref.shape
     assert torch.allclose(mixed, mixed_ref)
+
+
+def test_tpa_linear_qkv_bias_adds_offset():
+    from megatron.core.transformer.tpa import TPALinearQKV
+
+    config = _build_test_config()
+    config.tpa_rank = 2
+    config.tpa_q_rank = 4
+
+    tpa = TPALinearQKV(
+        config.hidden_size,
+        config.kv_channels * config.num_attention_heads
+        + 2 * config.kv_channels * config.num_query_groups,
+        config=config,
+        init_method=config.init_method,
+        gather_output=False,
+        bias=True,
+        skip_bias_add=False,
+        is_expert=False,
+        tp_comm_buffer_name="qkv",
+        tp_group=None,
+    )
+
+    assert tpa.bias is not None
+    with torch.no_grad():
+        tpa.bias.copy_(torch.linspace(0, 1, tpa.bias.numel()))
+
+    seq_len = 3
+    batch_size = 2
+    hidden_states = torch.randn(seq_len, batch_size, config.hidden_size)
+
+    mixed, _ = tpa(hidden_states)
+
+    a_q, _ = tpa.linear_a_q(hidden_states)
+    a_k, _ = tpa.linear_a_k(hidden_states)
+    a_v, _ = tpa.linear_a_v(hidden_states)
+    b_q, _ = tpa.linear_b_q(hidden_states)
+    b_k, _ = tpa.linear_b_k(hidden_states)
+    b_v, _ = tpa.linear_b_v(hidden_states)
+
+    h = tpa.num_attention_heads_per_partition
+    g = tpa.num_query_groups_per_partition
+    d = tpa.head_dim
+    q_rank = tpa.tpa_q_rank
+    rank = tpa.tpa_rank
+
+    a_q = a_q.view(seq_len, batch_size, h, q_rank)
+    a_k = a_k.view(seq_len, batch_size, g, rank)
+    a_v = a_v.view(seq_len, batch_size, g, rank)
+    b_q = b_q.view(seq_len, batch_size, q_rank, d)
+    b_k = b_k.view(seq_len, batch_size, rank, d)
+    b_v = b_v.view(seq_len, batch_size, rank, d)
+
+    q = torch.matmul(a_q.view(seq_len * batch_size, h, q_rank), b_q.view(seq_len * batch_size, q_rank, d))
+    q = q.div_(q_rank).view(seq_len, batch_size, h, d)
+    k = torch.matmul(a_k.view(seq_len * batch_size, g, rank), b_k.view(seq_len * batch_size, rank, d))
+    k = k.div_(rank).view(seq_len, batch_size, g, d)
+    v = torch.matmul(a_v.view(seq_len * batch_size, g, rank), b_v.view(seq_len * batch_size, rank, d))
+    v = v.div_(rank).view(seq_len, batch_size, g, d)
+
+    heads_per_group = h // g
+    q = q.view(seq_len, batch_size, g, heads_per_group, d)
+    q = q.reshape(seq_len, batch_size, g, heads_per_group * d)
+    k = k.reshape(seq_len, batch_size, g, d)
+    v = v.reshape(seq_len, batch_size, g, d)
+    mixed_ref = torch.cat([q, k, v], dim=3).reshape(seq_len, batch_size, -1)
+    mixed_ref = mixed_ref + tpa.bias
+
+    assert mixed.shape == mixed_ref.shape
+    assert torch.allclose(mixed, mixed_ref)
