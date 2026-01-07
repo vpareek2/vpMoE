@@ -14,6 +14,10 @@ num_query_groups = 2
 head_dim = 128
 ffn_hidden_size = 128
 
+# Value residual mixing (locked in architecture).
+value_residual = true
+value_residual_init = 1.0
+
 normalization = "RMSNorm"
 qk_layernorm = true
 softmax_type = "learnable"

@@ -23,6 +23,10 @@ head_dim = 128
 # Dense FFN width (chosen to match the vpMoE shared expert size).
 ffn_hidden_size = 512
 
+# Value residual mixing (locked in architecture).
+value_residual = true
+value_residual_init = 1.0
+
 normalization = "RMSNorm"
 qk_layernorm = true
 softmax_type = "learnable"

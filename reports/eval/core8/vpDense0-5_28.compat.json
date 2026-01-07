@@ -1,0 +1,34 @@
+{
+  "checkpoint_id": "vpDense0-5_28.compat",
+  "git_sha": null,
+  "config": {
+    "config": "configs/eval/core8.toml",
+    "bundle_url": "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip",
+    "bundle_sha256": "90a7c19e28ee7a52b4f6e1f87658deb9fde7f63deba2379045bdb1fe9ea5d200",
+    "mode": "smoke",
+    "max_per_task": 50,
+    "seed": 1337,
+    "model_format": "megatron"
+  },
+  "results": {
+    "arc_easy": 0.25999999046325684,
+    "arc_challenge": 0.23999999463558197,
+    "hellaswag": 0.11999999731779099,
+    "lambada_openai": 0.0,
+    "boolq": 0.6200000047683716,
+    "commonsense_qa": 0.4399999976158142,
+    "piqa": 0.5999999642372131,
+    "winogrande": 0.5199999809265137
+  },
+  "centered_results": {
+    "arc_easy": 0.013333320617675781,
+    "arc_challenge": -0.013333340485890707,
+    "hellaswag": -0.17333333690961203,
+    "lambada_openai": 0.0,
+    "boolq": 1.2548346280189847e-08,
+    "commonsense_qa": 0.2999999970197677,
+    "piqa": 0.19999992847442627,
+    "winogrande": 0.039999961853027344
+  },
+  "core8_centered_mean": 0.04583331788971758
+}

@@ -16,5 +16,8 @@ __pycache__
 ref/
 docs/research/
 data/
+weights/
+artifacts/
+reports/
 wandb/
 outputs/

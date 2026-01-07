@@ -1,0 +1,65 @@
+[core8]
+seed = 1337
+max_per_task_smoke = 50
+max_per_task_full = 500
+
+eval_bundle_url = "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip"
+eval_bundle_sha256 = "90a7c19e28ee7a52b4f6e1f87658deb9fde7f63deba2379045bdb1fe9ea5d200"
+# Container-first storage location (untracked)
+eval_bundle_dir = "/data/eval_bundle"
+
+[[tasks]]
+label = "arc_easy"
+dataset_uri = "world_knowledge/arc_easy.jsonl"
+num_fewshot = 10
+icl_task_type = "multiple_choice"
+continuation_delimiter = "\nAnswer: "
+
+[[tasks]]
+label = "arc_challenge"
+dataset_uri = "world_knowledge/arc_challenge.jsonl"
+num_fewshot = 10
+icl_task_type = "multiple_choice"
+continuation_delimiter = "\nAnswer: "
+
+[[tasks]]
+label = "hellaswag"
+dataset_uri = "language_understanding/hellaswag.jsonl"
+num_fewshot = 10
+icl_task_type = "multiple_choice"
+continuation_delimiter = " "
+
+[[tasks]]
+label = "lambada_openai"
+dataset_uri = "language_understanding/lambada_openai.jsonl"
+num_fewshot = 0
+icl_task_type = "language_modeling"
+continuation_delimiter = " "
+
+[[tasks]]
+label = "boolq"
+dataset_uri = "reading_comprehension/boolq.jsonl"
+num_fewshot = 10
+icl_task_type = "multiple_choice"
+continuation_delimiter = "\nAnswer: "
+
+[[tasks]]
+label = "commonsense_qa"
+dataset_uri = "commonsense_reasoning/commonsense_qa.jsonl"
+num_fewshot = 10
+icl_task_type = "multiple_choice"
+continuation_delimiter = " "
+
+[[tasks]]
+label = "piqa"
+dataset_uri = "commonsense_reasoning/piqa.jsonl"
+num_fewshot = 10
+icl_task_type = "multiple_choice"
+continuation_delimiter = "\nAnswer: "
+
+[[tasks]]
+label = "winogrande"
+dataset_uri = "language_understanding/winogrande.jsonl"
+num_fewshot = 0
+icl_task_type = "schema"
+continuation_delimiter = " "
