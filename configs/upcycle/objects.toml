@@ -81,9 +81,9 @@ vocab_size = 201088
 tokenizer_family = "o200k_harmony"
 untied_embeddings = true
 ffn_type = "dense"
-# NOTE: expert FFN width is an invariant we will fill once the student config is
-# instantiated in Megatron; tools must validate it matches the locked spec.
-intermediate_size = "TBD_locked_student_I_target"
+# Dense FFN width for vpDense0-5_28. Chosen to match the vpMoE shared expert size
+# so dense→MoE upcycling has a clean mapping.
+intermediate_size = 512
 
 [[objects]]
 id = "vpDense"
@@ -104,7 +104,8 @@ vocab_size = 201088
 tokenizer_family = "o200k_harmony"
 untied_embeddings = true
 ffn_type = "dense"
-intermediate_size = "TBD_locked_student_I_target"
+# Dense FFN width for vpDense. Chosen to match the vpMoE shared expert size.
+intermediate_size = 512
 
 [[objects]]
 id = "vpMoE"
@@ -125,8 +126,8 @@ vocab_size = 201088
 tokenizer_family = "o200k_harmony"
 untied_embeddings = true
 ffn_type = "moe"
-num_experts = 64
-topk = 2
+num_experts = 256
+topk = 4
 shared_expert = true
 shared_expert_size = 512
 intermediate_size = "TBD_locked_student_I_target"

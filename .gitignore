@@ -11,6 +11,9 @@ data/synth_dev/
 data/megatron/
 data/**/cache_*/
 data/**/cache/
+data/corpora/
+data/hf_cache/
+data/manifests/
 
 # Large local model artifacts (never commit)
 weights/

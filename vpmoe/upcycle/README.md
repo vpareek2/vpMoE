@@ -81,6 +81,25 @@ Notes:
 - OMP requires a donor model that already uses the target vocabulary/tokenizer (we use `weights/gpt-oss-20b`).
 - We patch `ref/mergekit` to avoid hard dependencies on `accelerate`/`peft` for tokensurgeon, and add a minimal architecture definition for GPT‑OSS (`ref/mergekit/mergekit/_data/architectures/gpt_oss.json`).
 - **Default:** do not run training immediately after vocab transplant. Only do a tiny “embeddings+lm_head only” warm-up if numeric/special-token regressions fail (`docs/upcycle.md`).
+- The converted checkpoint uses value residual mixing; layer 1 has no `value_residual_logit`, so **distributed checkpointing must use non‑homogeneous sharding**. Pass `--hetereogenous-dist-checkpoint` whenever loading/saving `vpDense0-5_28`.
+
+#### Optional: FFN surgery ablation (A vs D)
+
+To compare deterministic FFN compression strategies (weight-norm selection vs activation-based selection),
+use `scripts/upcycle/ffn_surgery_ablate.py` inside the container:
+
+```bash
+docker compose -f docker/compose.yml run --rm vpmoe \
+  bash -lc "python scripts/upcycle/ffn_surgery_ablate.py \
+    --model-dir weights/upcycle/qwen3-0_6B-o200k \
+    --method A+D \
+    --intermediate-size 512 \
+    --max-samples 32 \
+    --max-length 512 \
+    --batch-size 4"
+```
+
+Default choice (locked for conversion): **A (weight-norm selection)**.
 
 ### M3 — vpDense0-5_28 (compat) healing run is stable
 

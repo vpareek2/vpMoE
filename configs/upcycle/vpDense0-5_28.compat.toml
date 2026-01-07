@@ -11,6 +11,8 @@ kind = "train_megatron"
 [model]
 object = "vpDense0-5_28"
 mode = "compat"
+# Required to load/save the converted checkpoint because layer 1 lacks value_residual_logit.
+hetereogenous_dist_checkpoint = true
 
 [tokenizer]
 type = "O200kHarmonyTokenizer"

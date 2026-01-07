@@ -12,8 +12,8 @@ num_attention_heads = 8
 num_query_groups = 2
 head_dim = 128
 
-# Student FFN width (I_target). Keep this identical across vpDense and vpMoE.
-ffn_hidden_size = 512
+# Routed expert FFN width.
+ffn_hidden_size = 128
 
 normalization = "RMSNorm"
 qk_layernorm = true
@@ -50,8 +50,8 @@ grapem_share_across_heads = true
 grapem_log_freq_scale = 16.0
 
 [moe]
-num_experts = 64
-topk = 2
+num_experts = 256
+topk = 4
 shared_expert = true
 shared_expert_size = 512
 

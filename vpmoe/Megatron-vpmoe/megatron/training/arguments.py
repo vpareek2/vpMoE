@@ -1785,6 +1785,8 @@ def _add_network_size_args(parser):
                        help='Enable value residual mixing with the first layer values.')
     group.add_argument('--value-residual-init', type=float, default=1.0,
                        help='Initial lambda for value residual mixing (0-1).')
+    group.add_argument('--hetereogenous-dist-checkpoint', action='store_true',
+                       help='Use non-homogeneous layer sharding for distributed checkpoints.')
     group.add_argument('--openai-gelu', action='store_true',
                        help='Use OpenAIs GeLU implementation. This option'
                        'should not be used unless for backward compatibility'

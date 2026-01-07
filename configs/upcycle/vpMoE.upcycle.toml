@@ -10,8 +10,8 @@ source_dir = "weights/upcycle/vpDense"
 
 [target]
 object = "vpMoE"
-num_experts = 64
-topk = 2
+num_experts = 256
+topk = 4
 shared_expert = true
 shared_expert_size = 512
 init_experts = "copy_plus_noise"
