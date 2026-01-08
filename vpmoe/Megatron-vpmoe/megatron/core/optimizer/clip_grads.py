@@ -7,6 +7,15 @@ from typing import List, Optional, Union
 import torch
 from torch import inf
 
+_MAX_MULTI_TENSOR_TENSORS = 16384
+
+
+def _chunk_list(items: List[torch.Tensor], chunk_size: int) -> List[List[torch.Tensor]]:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0")
+    return [items[i : i + chunk_size] for i in range(0, len(items), chunk_size)]
+
+
 try:
     from transformer_engine.pytorch.optimizers import (
         multi_tensor_applier,
@@ -104,18 +113,16 @@ def get_grad_norm_fp32(
             # Use apex's multi-tensor applier for efficiency reasons.
             # Multi-tensor applier takes a function and a list of list
             # and performs the operation on that list all in one kernel.
+            total_norm = torch.zeros(1, dtype=torch.float, device='cuda')
             if grads_for_norm:
-                grad_norm, _ = multi_tensor_applier(
-                    l2_norm_impl,
-                    dummy_overflow_buf,
-                    [grads_for_norm],
-                    False,  # no per-parameter norm
-                )
-            else:
-                grad_norm = torch.zeros(1, dtype=torch.float, device='cuda')
-            # Since we will be summing across data parallel groups,
-            # we need the pow(norm-type).
-            total_norm = grad_norm**norm_type
+                for chunk in _chunk_list(grads_for_norm, _MAX_MULTI_TENSOR_TENSORS):
+                    grad_norm, _ = multi_tensor_applier(
+                        l2_norm_impl,
+                        dummy_overflow_buf,
+                        [chunk],
+                        False,  # no per-parameter norm
+                    )
+                    total_norm = total_norm + grad_norm**2
 
         else:
             for grad in grads_for_norm:
@@ -172,9 +179,10 @@ def clip_grad_by_total_norm_fp32(
     clip_coeff = max_norm / (total_norm + 1.0e-6)
     if clip_coeff < 1.0:
         dummy_overflow_buf = torch.zeros(1, dtype=torch.int, device='cuda')
-        multi_tensor_applier(
-            multi_tensor_scale_impl, dummy_overflow_buf, [grads, grads], clip_coeff
-        )
+        for chunk in _chunk_list(grads, _MAX_MULTI_TENSOR_TENSORS):
+            multi_tensor_applier(
+                multi_tensor_scale_impl, dummy_overflow_buf, [chunk, chunk], clip_coeff
+            )
 
 
 def count_zeros_fp32(

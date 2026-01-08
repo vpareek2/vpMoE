@@ -123,14 +123,13 @@ We treat this report as the canonical “did we regress?” output for each step
 
 ## Pass/fail policy (v1)
 
-We do not hard-fail training on eval in v1, but we **fail loud**:
+For the early rung chain (vocab surgery + weight surgery + depth changes), we expect CORE-8 to
+drop sharply and stay depressed until later “healing” / midtraining phases. So in v1 we treat
+CORE-8 as **tracking-only**:
 
-- Always print `core8_centered_mean` and per-task deltas vs previous checkpoint.
-- Trigger a “regression warning” if any of:
-  - `core8_centered_mean` drops by ≥ 0.02
-  - any single task centered score drops by ≥ 0.05
-
-Thresholds are intentionally conservative and should be tuned after we have baseline noise estimates.
+- Always print and persist `core8_centered_mean` and per-task metrics.
+- Print deltas vs the previous rung for visibility.
+- **No hard fail and no regression thresholds** until we have noise estimates and a stable baseline.
 
 ## Notes on comparability across the chain
 

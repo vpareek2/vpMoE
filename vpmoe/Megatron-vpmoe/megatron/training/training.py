@@ -108,7 +108,7 @@ from megatron.training.utils import get_batch_on_this_cp_rank, get_batch_on_this
 from megatron.training.datasets.data_samplers import build_pretraining_data_loader
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer.moe import upcycling_utils
-from megatron.core.transformer.moe.moe_utils import track_moe_metrics
+from megatron.core.transformer.moe.moe_utils import track_moe_metrics, track_router_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.parallel_state import (
     destroy_global_memory_buffer,
@@ -1512,7 +1512,8 @@ def training_log(
     grad_norm,
     params_norm,
     num_zeros_in_grad,
-    max_attention_logit,
+    max_attention_logit=None,
+    model=None,
 ):
     """Log training information such as losses, timing, ...."""
     args = get_args()
@@ -1719,6 +1720,15 @@ def training_log(
 
             with open(args.memory_snapshot_path, 'wb') as f:
                 dump(snapshot, f)
+
+        if args.num_experts is not None and model is not None:
+            track_router_metrics(
+                model=model,
+                iteration=iteration,
+                writer=writer,
+                wandb_writer=wandb_writer,
+                per_layer_logging=args.moe_per_layer_logging,
+            )
 
         elapsed_time = timers('interval-time').elapsed(barrier=True)
         elapsed_time_per_iteration = elapsed_time / total_iterations
@@ -2563,6 +2573,7 @@ def train(
             params_norm,
             num_zeros_in_grad,
             max_attention_logit,
+            model=model,
         )
 
         # Evaluation.

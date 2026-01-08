@@ -10,6 +10,27 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from tests.unit_tests.test_utilities import Utils
 
 
+def _expected_moe_layer_param_count(config: TransformerConfig, num_moe_experts: int) -> int:
+    hidden_size = config.hidden_size
+    expert_ffn = config.moe_ffn_hidden_size
+    shared_ffn = config.moe_shared_expert_intermediate_size
+    expert_fc1_out = expert_ffn * 2 if config.gated_linear_unit else expert_ffn
+    shared_fc1_out = shared_ffn * 2 if config.gated_linear_unit else shared_ffn
+
+    expert_params = num_moe_experts * (
+        hidden_size * expert_fc1_out + expert_ffn * hidden_size
+    )
+    shared_params = hidden_size * shared_fc1_out + shared_ffn * hidden_size
+    router_params = num_moe_experts * hidden_size
+
+    if config.add_bias_linear:
+        expert_params += num_moe_experts * (expert_fc1_out + hidden_size)
+        shared_params += shared_fc1_out + hidden_size
+        router_params += num_moe_experts
+
+    return expert_params + shared_params + router_params
+
+
 class TestSharedExperts:
 
     def setup_method(self, method):
@@ -20,7 +41,8 @@ class TestSharedExperts:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.internal
-    def test_gpu_forward(self):
+    @pytest.mark.parametrize("add_bias_linear", [False, True])
+    def test_gpu_forward(self, add_bias_linear):
         Utils.initialize_model_parallel(1, 1)
         model_parallel_cuda_manual_seed(123)
         print("done intializing")
@@ -37,7 +59,7 @@ class TestSharedExperts:
             bias_activation_fusion=True,
             moe_router_load_balancing_type="sinkhorn",
             moe_router_topk=1,
-            add_bias_linear=False,
+            add_bias_linear=add_bias_linear,
         )
         transformer_layer_spec = get_gpt_layer_local_spec(
             num_experts=num_moe_experts, moe_grouped_gemm=False
@@ -49,7 +71,9 @@ class TestSharedExperts:
         assert isinstance(self.moe_layer, MoELayer)
 
         num_weights = sum([p.numel() for p in self.moe_layer.parameters()])
-        assert num_weights == 3480 + 1152
+        assert num_weights == _expected_moe_layer_param_count(
+            transformer_config, num_moe_experts
+        )
         assert self.moe_layer.shared_experts is not None
         assert self.moe_layer.shared_experts.stream is None
         assert self.moe_layer.token_dispatcher.shared_experts is None
@@ -77,7 +101,8 @@ class TestSharedExpertsOverlap:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.internal
-    def test_gpu_forward(self):
+    @pytest.mark.parametrize("add_bias_linear", [False, True])
+    def test_gpu_forward(self, add_bias_linear):
         Utils.initialize_model_parallel(1, 1)
         model_parallel_cuda_manual_seed(123)
         print("done intializing")
@@ -96,7 +121,7 @@ class TestSharedExpertsOverlap:
             bias_activation_fusion=True,
             moe_router_load_balancing_type="sinkhorn",
             moe_router_topk=1,
-            add_bias_linear=False,
+            add_bias_linear=add_bias_linear,
         )
         transformer_layer_spec = get_gpt_layer_local_spec(
             num_experts=num_moe_experts, moe_grouped_gemm=False
@@ -108,7 +133,9 @@ class TestSharedExpertsOverlap:
         assert isinstance(self.moe_layer, MoELayer)
 
         num_weights = sum([p.numel() for p in self.moe_layer.parameters()])
-        assert num_weights == 3480 + 1152
+        assert num_weights == _expected_moe_layer_param_count(
+            transformer_config, num_moe_experts
+        )
         assert self.moe_layer.shared_experts is not None
         assert self.moe_layer.shared_experts.stream is not None
         assert self.moe_layer.token_dispatcher.shared_experts is not None

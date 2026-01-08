@@ -13,6 +13,15 @@ from megatron.core.tensor_parallel.layers import (
 )
 from megatron.core.utils import divide, get_pg_size, get_tensor_model_parallel_group_if_none
 
+try:
+    from megatron.core.extensions.transformer_engine import TEColumnParallelLinear, TELinear
+
+    HAVE_TE = True
+except ImportError:
+    TEColumnParallelLinear = None
+    TELinear = None
+    HAVE_TE = False
+
 
 class TPALinearQKV(nn.Module):
     """TPA QKV projection that matches Megatron's mixed QKV layout."""
@@ -45,6 +54,12 @@ class TPALinearQKV(nn.Module):
         world_size = get_pg_size(self.tp_group)
         self.tpa_rank = int(config.tpa_rank)
         self.tpa_q_rank = int(config.tpa_q_rank)
+        self.use_te_linears = bool(getattr(config, "transformer_impl", None) == "transformer_engine")
+        if self.use_te_linears and not HAVE_TE:
+            raise ImportError(
+                "TPA requested TE linears (transformer_impl=transformer_engine), but Transformer Engine "
+                "extensions are not available."
+            )
 
         self.num_attention_heads = int(config.num_attention_heads)
         self.num_query_groups = (
@@ -70,7 +85,8 @@ class TPALinearQKV(nn.Module):
             )
         self.output_size_per_partition = divide(expected_output, world_size)
 
-        self.linear_a_q = ColumnParallelLinear(
+        LinearA = TEColumnParallelLinear if self.use_te_linears else ColumnParallelLinear
+        self.linear_a_q = LinearA(
             input_size,
             self.num_attention_heads * self.tpa_q_rank,
             config=config,
@@ -82,7 +98,7 @@ class TPALinearQKV(nn.Module):
             tp_comm_buffer_name='tpa_a_q',
             tp_group=self.tp_group,
         )
-        self.linear_a_k = ColumnParallelLinear(
+        self.linear_a_k = LinearA(
             input_size,
             self.num_query_groups * self.tpa_rank,
             config=config,
@@ -94,7 +110,7 @@ class TPALinearQKV(nn.Module):
             tp_comm_buffer_name='tpa_a_k',
             tp_group=self.tp_group,
         )
-        self.linear_a_v = ColumnParallelLinear(
+        self.linear_a_v = LinearA(
             input_size,
             self.num_query_groups * self.tpa_rank,
             config=config,
@@ -108,43 +124,66 @@ class TPALinearQKV(nn.Module):
         )
 
         # B projections are shared across heads; gather to full output.
-        gather_b = world_size > 1
-        self.linear_b_q = ColumnParallelLinear(
-            input_size,
-            self.tpa_q_rank * self.head_dim,
-            config=config,
-            init_method=init_method,
-            gather_output=gather_b,
-            bias=False,
-            skip_bias_add=False,
-            is_expert=is_expert,
-            tp_comm_buffer_name='tpa_b_q',
-            tp_group=self.tp_group,
-        )
-        self.linear_b_k = ColumnParallelLinear(
-            input_size,
-            self.tpa_rank * self.head_dim,
-            config=config,
-            init_method=init_method,
-            gather_output=gather_b,
-            bias=False,
-            skip_bias_add=False,
-            is_expert=is_expert,
-            tp_comm_buffer_name='tpa_b_k',
-            tp_group=self.tp_group,
-        )
-        self.linear_b_v = ColumnParallelLinear(
-            input_size,
-            self.tpa_rank * self.head_dim,
-            config=config,
-            init_method=init_method,
-            gather_output=gather_b,
-            bias=False,
-            skip_bias_add=False,
-            is_expert=is_expert,
-            tp_comm_buffer_name='tpa_b_v',
-            tp_group=self.tp_group,
-        )
+        if self.use_te_linears:
+            assert TELinear is not None
+
+            def _dup_linear(name: str, out_dim: int) -> nn.Module:
+                return TELinear(
+                    input_size=input_size,
+                    output_size=out_dim,
+                    parallel_mode="duplicated",
+                    config=config,
+                    init_method=init_method,
+                    bias=False,
+                    skip_bias_add=False,
+                    skip_weight_param_allocation=False,
+                    tp_comm_buffer_name=name,
+                    is_expert=is_expert,
+                    symmetric_ar_type=config.symmetric_ar_type,
+                    tp_group=None,
+                )
+
+            self.linear_b_q = _dup_linear("tpa_b_q", self.tpa_q_rank * self.head_dim)
+            self.linear_b_k = _dup_linear("tpa_b_k", self.tpa_rank * self.head_dim)
+            self.linear_b_v = _dup_linear("tpa_b_v", self.tpa_rank * self.head_dim)
+        else:
+            gather_b = world_size > 1
+            self.linear_b_q = ColumnParallelLinear(
+                input_size,
+                self.tpa_q_rank * self.head_dim,
+                config=config,
+                init_method=init_method,
+                gather_output=gather_b,
+                bias=False,
+                skip_bias_add=False,
+                is_expert=is_expert,
+                tp_comm_buffer_name='tpa_b_q',
+                tp_group=self.tp_group,
+            )
+            self.linear_b_k = ColumnParallelLinear(
+                input_size,
+                self.tpa_rank * self.head_dim,
+                config=config,
+                init_method=init_method,
+                gather_output=gather_b,
+                bias=False,
+                skip_bias_add=False,
+                is_expert=is_expert,
+                tp_comm_buffer_name='tpa_b_k',
+                tp_group=self.tp_group,
+            )
+            self.linear_b_v = ColumnParallelLinear(
+                input_size,
+                self.tpa_rank * self.head_dim,
+                config=config,
+                init_method=init_method,
+                gather_output=gather_b,
+                bias=False,
+                skip_bias_add=False,
+                is_expert=is_expert,
+                tp_comm_buffer_name='tpa_b_v',
+                tp_group=self.tp_group,
+            )
 
         if bias:
             if config.use_cpu_initialization:
@@ -173,6 +212,8 @@ class TPALinearQKV(nn.Module):
 
     def forward(self, hidden_states):
         # hidden_states: [s, b, h]
+        if hidden_states.dtype != self.config.params_dtype:
+            hidden_states = hidden_states.to(dtype=self.config.params_dtype)
         seq_len, batch_size, _ = hidden_states.shape
 
         a_q, _ = self.linear_a_q(hidden_states)

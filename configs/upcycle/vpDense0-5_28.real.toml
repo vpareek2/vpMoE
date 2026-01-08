@@ -15,6 +15,7 @@ type = "O200kHarmonyTokenizer"
 vocab_size_padded = 201088
 
 [attention]
+attention_dropout = 0.0
 use_rope = false
 use_grape = true
 local_global_schedule = "3_to_1"

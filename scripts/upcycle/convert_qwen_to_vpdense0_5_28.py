@@ -262,7 +262,7 @@ def main() -> None:
         config=config,
         transformer_layer_spec=layer_spec,
         vocab_size=spec.vocab_size,
-        max_sequence_length=4096,
+        max_sequence_length=2048,
         share_embeddings_and_output_weights=False,
         position_embedding_type="rope",
         rotary_base=rope_theta,

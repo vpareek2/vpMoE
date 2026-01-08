@@ -27,7 +27,7 @@ from megatron.core.transformer.multi_token_prediction import (
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.tpa import TPALinearQKV
-from megatron.core.transformer.torch_norm import L2Norm
+from megatron.core.transformer.torch_norm import L2Norm, WrappedTorchNorm
 from megatron.core.transformer.transformer_block import (
     TransformerBlockSubmodules,
     get_num_layers_to_build,
@@ -688,7 +688,9 @@ def get_gpt_decoder_block_spec(
             kitchen_attention_backend=config.kitchen_attention_backend,
         )
     else:
-        layer_norm_impl = LNImpl
+        # RMSNorm is not supported in Apex FusedLayerNorm.
+        norm = normalization or config.normalization
+        layer_norm_impl = LNImpl if norm == "LayerNorm" else WrappedTorchNorm
         dense_layer_spec = get_gpt_layer_local_spec(
             num_experts=None,
             moe_grouped_gemm=False,
@@ -833,7 +835,9 @@ def get_gpt_decoder_block_spec_with_tpa(
             kitchen_attention_backend=config.kitchen_attention_backend,
         )
     else:
-        layer_norm_impl = LNImpl
+        # RMSNorm is not supported in Apex FusedLayerNorm.
+        norm = normalization or config.normalization
+        layer_norm_impl = LNImpl if norm == "LayerNorm" else WrappedTorchNorm
         local_dense_spec = get_gpt_layer_local_spec_with_tpa(
             num_experts=None,
             moe_grouped_gemm=False,

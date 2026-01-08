@@ -87,7 +87,7 @@ It instantiates the **full vpMoE** architecture from `configs/vpmoe.toml` and ru
 Example (Nsight Systems, single GPU):
 
 ```bash
-PROFILE_TOOL=nsys PROFILE_NPROC_PER_NODE=1 PROFILE_SEQ_LEN=4096 \
+PROFILE_TOOL=nsys PROFILE_NPROC_PER_NODE=1 PROFILE_SEQ_LEN=2048 \
   scripts/profile.sh
 ```
 

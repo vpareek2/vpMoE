@@ -44,8 +44,6 @@ class SharedExpertMLP(MLP):
         pg_collection: Optional[ProcessGroupCollection] = None,
     ):
         config = deepcopy(config)
-        assert config.add_bias_linear == False, "bias is not supported in the shared experts, "
-        "please set '--disable-bias-linear' instead."
 
         config.ffn_hidden_size = config.moe_shared_expert_intermediate_size
         # TODO(Hepteract): pass pg_collection to MLP after refactoring MLP

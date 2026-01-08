@@ -1,9 +1,10 @@
 # Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 import math
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import torch
+import torch.distributed
 
 from megatron.core import parallel_state
 from megatron.core.fp4_utils import get_fp4_align_size
@@ -867,6 +868,211 @@ def track_moe_metrics(
                     )
 
     clear_aux_losses_tracker()
+
+
+def _iter_moe_layers(model):
+    """Yield modules that look like MoE layers (avoid circular imports)."""
+    if isinstance(model, (list, tuple)):
+        for chunk in model:
+            yield from _iter_moe_layers(chunk)
+        return
+    for module in model.modules():
+        router = getattr(module, "router", None)
+        config = getattr(module, "config", None)
+        if router is None or config is None:
+            continue
+        if getattr(config, "num_moe_experts", None) is None:
+            continue
+        yield module
+
+
+def _reduce_tokens_per_expert(tokens_per_expert: torch.Tensor, group) -> torch.Tensor:
+    """Sum tokens_per_expert across the given process group (best-effort)."""
+    if not torch.distributed.is_initialized():
+        return tokens_per_expert
+    if group is None:
+        return tokens_per_expert
+    try:
+        world = torch.distributed.get_world_size(group)
+    except Exception:
+        world = 1
+    if world <= 1:
+        return tokens_per_expert
+    if not tokens_per_expert.is_cuda:
+        # Avoid CPU all-reduce if NCCL is in use.
+        if torch.cuda.is_available():
+            tokens_per_expert = tokens_per_expert.to(device=torch.cuda.current_device())
+        else:
+            return tokens_per_expert
+    out = tokens_per_expert.clone()
+    torch.distributed.all_reduce(out, group=group)
+    return out
+
+
+def compute_router_stats(
+    tokens_per_expert: torch.Tensor,
+    expert_bias: Optional[torch.Tensor] = None,
+    *,
+    eps: float = 1e-12,
+) -> Dict[str, Optional[float]]:
+    """Compute router health stats from token counts.
+
+    Returns:
+      - cv_pct: coefficient of variation (std/mean) * 100
+      - entropy: entropy of token distribution over experts
+      - max_load_pct: max token share * 100
+      - experts_active: number of experts with >0 tokens
+      - dead_experts: number of experts with 0 tokens
+      - bias_range: max(bias) - min(bias) if expert_bias provided
+    """
+    t = tokens_per_expert.detach().float()
+    total = float(t.sum().item())
+    num_experts = int(t.numel())
+    if total <= 0.0 or num_experts == 0:
+        return {
+            "cv_pct": 0.0,
+            "entropy": 0.0,
+            "max_load_pct": 0.0,
+            "experts_active": 0.0,
+            "dead_experts": float(num_experts),
+            "bias_range": None if expert_bias is None else 0.0,
+        }
+
+    mean = total / float(num_experts)
+    std = float(t.std(unbiased=False).item())
+    cv_pct = (std / mean * 100.0) if mean > 0.0 else 0.0
+
+    p = t / max(total, eps)
+    p = torch.clamp(p, min=eps)
+    entropy = float((-p * p.log()).sum().item())
+    max_load_pct = float((t.max().item() / total) * 100.0)
+    experts_active = float((t > 0).sum().item())
+    dead_experts = float((t <= 0).sum().item())
+
+    bias_range = None
+    if expert_bias is not None:
+        b = expert_bias.detach().float()
+        bias_range = float((b.max() - b.min()).item())
+
+    return {
+        "cv_pct": float(cv_pct),
+        "entropy": float(entropy),
+        "max_load_pct": float(max_load_pct),
+        "experts_active": float(experts_active),
+        "dead_experts": float(dead_experts),
+        "bias_range": bias_range,
+    }
+
+
+def collect_router_stats(model):
+    """Return per-layer and aggregate router stats (best-effort)."""
+    per = []
+    cvs, ents, max_loads, experts_active_list = [], [], [], []
+    bias_mins, bias_maxs = [], []
+    dead_total = 0.0
+    for idx, layer in enumerate(_iter_moe_layers(model)):
+        router = getattr(layer, "router", None)
+        tokens = getattr(router, "last_tokens_per_expert", None)
+        if tokens is None:
+            continue
+        group = getattr(router, "tp_dp_cp_group", None)
+        tokens_reduced = _reduce_tokens_per_expert(tokens, group)
+        bias = getattr(router, "expert_bias", None) if getattr(router, "enable_expert_bias", False) else None
+        stats = compute_router_stats(tokens_reduced, expert_bias=bias)
+
+        cv = stats["cv_pct"]
+        ent = stats["entropy"]
+        mx = stats["max_load_pct"]
+        ex_active = stats["experts_active"]
+        dead = stats["dead_experts"]
+        bias_range = stats["bias_range"]
+
+        if cv is not None:
+            cvs.append(cv)
+        if ent is not None:
+            ents.append(ent)
+        if mx is not None:
+            max_loads.append(mx)
+        if ex_active is not None:
+            experts_active_list.append(ex_active)
+        if dead is not None:
+            dead_total += float(dead)
+
+        bmin = bmax = None
+        if bias is not None:
+            b = bias.detach().float()
+            bmin = float(b.min().item())
+            bmax = float(b.max().item())
+            bias_mins.append(bmin)
+            bias_maxs.append(bmax)
+
+        layer_id = getattr(layer, "layer_number", None)
+        if layer_id is None:
+            layer_id = idx
+
+        per.append(
+            {
+                "layer": int(layer_id),
+                "cv_pct": cv,
+                "entropy": ent,
+                "max_load_pct": mx,
+                "experts_active": ex_active,
+                "dead_experts": dead,
+                "bias_range": bias_range,
+                "bias_min": bmin,
+                "bias_max": bmax,
+            }
+        )
+
+    agg = {
+        "mean_cv_pct": (sum(cvs) / len(cvs)) if cvs else None,
+        "std_cv_pct": (float(torch.tensor(cvs).std(unbiased=False).item()) if cvs else None),
+        "mean_entropy": (sum(ents) / len(ents)) if ents else None,
+        "min_entropy": (min(ents) if ents else None),
+        "mean_max_load_pct": (sum(max_loads) / len(max_loads)) if max_loads else None,
+        "dead_experts_count": float(dead_total),
+        "experts_active_mean": (sum(experts_active_list) / len(experts_active_list)) if experts_active_list else None,
+        "expert_bias_range": (max(bias_maxs) - min(bias_mins)) if bias_mins else None,
+    }
+    return per, agg
+
+
+def track_router_metrics(
+    *,
+    model,
+    iteration: int,
+    writer=None,
+    wandb_writer=None,
+    per_layer_logging: bool = False,
+):
+    """Log router health metrics (W&B/TensorBoard)."""
+    per, agg = collect_router_stats(model)
+    if not per and not any(v is not None for v in agg.values()):
+        return
+
+    if writer is not None:
+        for k, v in agg.items():
+            if v is not None:
+                writer.add_scalar(f"moe/router_agg/{k}", v, iteration)
+        if per_layer_logging:
+            for item in per:
+                layer = item.get("layer")
+                for k in ("cv_pct", "entropy", "max_load_pct", "experts_active", "dead_experts", "bias_range"):
+                    v = item.get(k)
+                    if v is not None:
+                        writer.add_scalar(f"moe/router/layer_{layer}/{k}", v, iteration)
+
+    if wandb_writer:
+        payload = {f"moe/router_agg/{k}": v for k, v in agg.items() if v is not None}
+        if per_layer_logging:
+            for item in per:
+                layer = item.get("layer")
+                for k in ("cv_pct", "entropy", "max_load_pct", "experts_active", "dead_experts", "bias_range"):
+                    v = item.get(k)
+                    if v is not None:
+                        payload[f"moe/router/layer_{layer}/{k}"] = v
+        if payload:
+            wandb_writer.log(payload, iteration)
 
 
 def get_updated_expert_bias(tokens_per_expert, expert_bias, expert_bias_update_rate):

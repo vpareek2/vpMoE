@@ -19,6 +19,7 @@ type = "O200kHarmonyTokenizer"
 vocab_size_padded = 201088
 
 [attention]
+attention_dropout = 0.0
 # Placeholder: finalize once the exact Megatron flags/config surface is wired.
 use_rope = true
 use_grape = false

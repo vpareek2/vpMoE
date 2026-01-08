@@ -27,7 +27,8 @@ activation = "squaredrelu"
 untied_embeddings = true
 
 [attention]
-max_sequence_length = 4096
+attention_dropout = 0.0
+max_sequence_length = 2048
 position_embedding_type = "grapem"
 
 # 3:1 local:global schedule => every 4th layer is global (full attention).
@@ -53,3 +54,10 @@ shared_expert_size = 256
 
 # First layer dense FFN, remaining layers MoE.
 first_layer_dense = true
+
+[optimizer]
+name = "normuon"
+normuon_momentum = 0.95
+normuon_beta2 = 0.95
+normuon_eps = 1e-10
+polar_express_safety_factor = 2e-2

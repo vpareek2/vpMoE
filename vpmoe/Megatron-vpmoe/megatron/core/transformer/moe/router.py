@@ -157,6 +157,7 @@ class TopKRouter(Router):
         self.routing_type = self.config.moe_router_load_balancing_type
         self.score_function = self.config.moe_router_score_function
         self.input_jitter = None
+        self.last_tokens_per_expert = None
 
         self.enable_expert_bias = self.config.moe_router_enable_expert_bias
         if self.enable_expert_bias:
@@ -553,6 +554,13 @@ class TopKRouter(Router):
 
         # Optionally apply expert bias
         self._apply_expert_bias(routing_map)
+
+        # Cache tokens-per-expert for logging (local batch). Reduced at log time.
+        if self.training and torch.is_grad_enabled():
+            with torch.no_grad():
+                self.last_tokens_per_expert = routing_map.sum(dim=0).float()
+        else:
+            self.last_tokens_per_expert = None
 
         return probs, routing_map
 

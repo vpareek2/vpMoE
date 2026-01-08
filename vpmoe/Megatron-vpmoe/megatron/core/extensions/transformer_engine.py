@@ -662,6 +662,8 @@ class TELinear(te.pytorch.Linear):
 
     def forward(self, x):
         """Forward."""
+        if not torch.is_autocast_enabled() and x.dtype != self.weight.dtype:
+            x = x.to(dtype=self.weight.dtype)
         _is_first_microbatch = (
             None if self.disable_parameter_transpose_cache else self.is_first_microbatch
         )
@@ -883,6 +885,8 @@ class TELayerNormColumnParallelLinear(te.pytorch.LayerNormLinear):
 
     def forward(self, x):
         """Forward."""
+        if not torch.is_autocast_enabled() and x.dtype != self.layer_norm_weight.dtype:
+            x = x.to(dtype=self.layer_norm_weight.dtype)
         _is_first_microbatch = (
             None if self.disable_parameter_transpose_cache else self.is_first_microbatch
         )

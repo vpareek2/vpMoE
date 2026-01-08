@@ -167,13 +167,32 @@ class MLP(MegatronModule):
         elif self.config.bias_activation_fusion:
             if per_token_scale is not None:
                 if self.activation_func == F.silu and self.config.gated_linear_unit:
-                    # dtype is handled inside the fused kernel
-                    intermediate_parallel = weighted_bias_swiglu_impl(
-                        intermediate_parallel,
-                        bias_parallel,
-                        per_token_scale.unsqueeze(-1),
-                        self.config.activation_func_fp8_input_store,
-                    )
+                    if bias_parallel is None:
+                        # dtype is handled inside the fused kernel
+                        intermediate_parallel = weighted_bias_swiglu_impl(
+                            intermediate_parallel,
+                            bias_parallel,
+                            per_token_scale.unsqueeze(-1),
+                            self.config.activation_func_fp8_input_store,
+                        )
+                    else:
+                        intermediate_parallel = intermediate_parallel + bias_parallel
+
+                        def glu(x):
+                            x_glu, x_linear = torch.chunk(x, 2, dim=-1)
+                            if (val := self.config.activation_func_clamp_value) is not None:
+                                x_glu = x_glu.clamp(min=None, max=val)
+                                x_linear = x_linear.clamp(min=-val, max=val)
+                            return self.config.activation_func(x_glu) * (
+                                x_linear + self.config.glu_linear_offset
+                            )
+
+                        intermediate_parallel = glu(intermediate_parallel)
+                        original_dtype = intermediate_parallel.dtype
+                        intermediate_parallel = intermediate_parallel * per_token_scale.unsqueeze(
+                            -1
+                        )
+                        intermediate_parallel = intermediate_parallel.to(original_dtype)
                 elif self.activation_func == quick_gelu and self.config.gated_linear_unit:
                     intermediate_parallel = weighted_bias_quick_geglu_impl(
                         intermediate_parallel,
@@ -240,7 +259,11 @@ class MLP(MegatronModule):
         if per_token_scale is not None and output_bias is not None:
             # if this MLP is an expert, and bias is required, we add the bias to output directly
             # without doing bda later.
-            output += output_bias.unsqueeze(0) * per_token_scale.unsqueeze(-1)
+            scaled_bias = output_bias.unsqueeze(0) * per_token_scale.unsqueeze(-1)
+            if scaled_bias.dtype != output.dtype:
+                # Keep MoE outputs in params dtype when router scales in fp32.
+                scaled_bias = scaled_bias.to(output.dtype)
+            output = output + scaled_bias
             output_bias = None
 
         return output, output_bias

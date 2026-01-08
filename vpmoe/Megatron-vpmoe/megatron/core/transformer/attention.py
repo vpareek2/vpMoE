@@ -994,6 +994,9 @@ class Attention(MegatronModule, ABC):
         # core attention computation
         # ==================================
 
+        if attention_bias is not None and attention_bias.dtype != query.dtype:
+            attention_bias = attention_bias.to(dtype=query.dtype)
+
         nvtx_range_push(suffix="core_attention")
         if self.checkpoint_core_attention and self.training:
             core_attn_out = self._checkpointed_attention_forward(
