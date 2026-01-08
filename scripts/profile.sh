@@ -130,6 +130,10 @@ COMMON_ARGS=(
   --transformer-impl "$PROFILE_TRANSFORMER_IMPL"
 )
 
+if [[ "$PROFILE_TRANSFORMER_IMPL" == "local" ]]; then
+  COMMON_ARGS+=(--no-persist-layer-norm)
+fi
+
 PROFILE_ARGS=(--profile --profile-step-start "$PROFILE_PROFILE_STEP_START" --profile-step-end "$PROFILE_PROFILE_STEP_END" --profile-ranks "$PROFILE_PROFILE_RANKS")
 
 TRAIN_CMD=(uv run python -m torch.distributed.run --nproc_per_node="$PROFILE_NPROC_PER_NODE" vpmoe/Megatron-vpmoe/pretrain_gpt.py)
