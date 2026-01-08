@@ -93,6 +93,17 @@ PROFILE_TOOL=nsys PROFILE_NPROC_PER_NODE=1 PROFILE_SEQ_LEN=2048 \
 
 For EP profiling, set `PROFILE_EP>1` and increase `PROFILE_NPROC_PER_NODE` accordingly.
 
+Outputs are organized under `artifacts/profiles/<date>/<hw>/<tool>/<run_id>/` and each run
+writes a `meta.json` plus an `artifacts/profiles/index.jsonl` entry. Override the root with
+`PROFILE_OUT_DIR` if needed.
+
+For GB10 profiling stability, you can disable expensive torch-profiler options:
+
+```bash
+PROFILE_TOOL=torch PROFILE_TORCH_RECORD_SHAPES=0 PROFILE_TORCH_WITH_STACK=0 \
+  scripts/profile.sh
+```
+
 ### Sliding-window semantics (avoid off-by-one)
 
 We treat the configured window size (**128**) as **window span length in tokens, including the current token**.

@@ -12,8 +12,9 @@
 - FlashAttention is disabled by `softmax_type=learnable` + post-scale bias; fused attention works only for SWA but crashes on sm121.
 
 ### Recent artifacts
-- Nsight Systems capture: `data/profiles/vpmoe_sl512_mb1_tp1_ep1_pp1_n1.nsys-rep`
-- Torch profiler traces exist in `data/profiles/*/*.pt.trace.json` but are CPU-only (no CUDA activities).
+- Nsight Systems capture: `artifacts/profiles/migrated_2026-01-08/gb10_sm121/nsys/vpmoe_sl512_mb1_tp1_ep1_pp1_n1.nsys-rep`
+- New traces now land under `artifacts/profiles/<date>/<hw>/<tool>/<run_id>/`.
+- Torch profiler traces in `artifacts/profiles/migrated_2026-01-08/gb10_sm121/torch/*/*.pt.trace.json` are CPU-only; new runs capture CUDA when available.
 
 ### Blockers / risks
 - sm121 (GB10) TE fused attention is unstable; performance work should move to H100/B200.

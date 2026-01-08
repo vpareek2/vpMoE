@@ -2314,16 +2314,22 @@ def train(
         and torch.distributed.get_rank() in args.profile_ranks
         and args.use_pytorch_profiler
     ):
+        # Align torch profiler window with nsys: capture steps [start, end] inclusive.
+        active_steps = max(args.profile_step_end - args.profile_step_start + 1, 1)
+        activities = [torch.profiler.ProfilerActivity.CPU]
+        if torch.cuda.is_available():
+            activities.append(torch.profiler.ProfilerActivity.CUDA)
         prof = torch.profiler.profile(
             schedule=torch.profiler.schedule(
-                wait=max(args.profile_step_start - 1, 0),
-                warmup=1 if args.profile_step_start > 0 else 0,
-                active=args.profile_step_end - args.profile_step_start,
+                wait=max(args.profile_step_start, 0),
+                warmup=0,
+                active=active_steps,
                 repeat=1,
             ),
+            activities=activities,
             on_trace_ready=torch.profiler.tensorboard_trace_handler(args.tensorboard_dir),
-            record_shapes=True,
-            with_stack=True,
+            record_shapes=args.profile_record_shapes,
+            with_stack=args.profile_with_stack,
         )
         prof.start()
 

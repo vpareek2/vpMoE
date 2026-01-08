@@ -21,9 +21,11 @@ PROFILE_PROFILE_STEP_END="${PROFILE_PROFILE_STEP_END:-12}"
 PROFILE_PROFILE_RANKS="${PROFILE_PROFILE_RANKS:-0}"
 
 PROFILE_TOOL="${PROFILE_TOOL:-nsys}" # nsys|torch
-PROFILE_OUT_DIR="${PROFILE_OUT_DIR:-data/profiles}"
+PROFILE_OUT_DIR="${PROFILE_OUT_DIR:-artifacts/profiles}"
 PROFILE_RUN_NAME="${PROFILE_RUN_NAME:-vpmoe_sl${PROFILE_SEQ_LEN}_mb${PROFILE_MICRO_BATCH_SIZE}_tp${PROFILE_TP}_ep${PROFILE_EP}_pp${PROFILE_PP}_n${PROFILE_NPROC_PER_NODE}}"
 PROFILE_TRANSFORMER_IMPL="${PROFILE_TRANSFORMER_IMPL:-transformer_engine}" # local|transformer_engine|inference_optimized
+PROFILE_TORCH_RECORD_SHAPES="${PROFILE_TORCH_RECORD_SHAPES:-}"
+PROFILE_TORCH_WITH_STACK="${PROFILE_TORCH_WITH_STACK:-}"
 
 # Clamp profile window to a valid range for torch/NSYS profiling.
 if (( PROFILE_PROFILE_STEP_END <= PROFILE_PROFILE_STEP_START )); then
@@ -64,6 +66,12 @@ docker compose -f "$ROOT_DIR/docker/compose.yml" run --rm \
   -e "PROFILE_TOOL=$PROFILE_TOOL" \
   -e "PROFILE_OUT_DIR=$PROFILE_OUT_DIR" \
   -e "PROFILE_RUN_NAME=$PROFILE_RUN_NAME" \
+  -e "PROFILE_DATE_TAG=${PROFILE_DATE_TAG:-}" \
+  -e "PROFILE_TIME_TAG=${PROFILE_TIME_TAG:-}" \
+  -e "PROFILE_RUN_TAG=${PROFILE_RUN_TAG:-}" \
+  -e "PROFILE_HW_TAG=${PROFILE_HW_TAG:-}" \
+  -e "PROFILE_TORCH_RECORD_SHAPES=${PROFILE_TORCH_RECORD_SHAPES}" \
+  -e "PROFILE_TORCH_WITH_STACK=${PROFILE_TORCH_WITH_STACK}" \
   -e "PROFILE_TRANSFORMER_IMPL=$PROFILE_TRANSFORMER_IMPL" \
   "${EXTRA_ENV[@]}" \
   vpmoe bash -lc '
@@ -154,7 +162,156 @@ PROFILE_ARGS=(--profile --profile-step-start "$PROFILE_PROFILE_STEP_START" --pro
 TRAIN_CMD=(uv run python -m torch.distributed.run --nproc_per_node="$PROFILE_NPROC_PER_NODE" vpmoe/Megatron-vpmoe/pretrain_gpt.py)
 TRAIN_CMD+=("${MODEL_ARGS[@]}" "${COMMON_ARGS[@]}" "${PROFILE_ARGS[@]}")
 
-mkdir -p "$OUT_DIR"
+append_bool_arg() {
+  local value="$1"
+  local true_flag="$2"
+  local false_flag="$3"
+  if [[ -z "$value" ]]; then
+    return 0
+  fi
+  case "${value,,}" in
+    1|true|yes|on)
+      TRAIN_CMD+=("$true_flag")
+      ;;
+    0|false|no|off)
+      TRAIN_CMD+=("$false_flag")
+      ;;
+    *)
+      echo "[error] invalid boolean for $true_flag/$false_flag: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [[ "$PROFILE_TOOL" == "torch" ]]; then
+  append_bool_arg "$PROFILE_TORCH_RECORD_SHAPES" --profile-record-shapes --no-profile-record-shapes
+  append_bool_arg "$PROFILE_TORCH_WITH_STACK" --profile-with-stack --no-profile-with-stack
+fi
+
+sanitize_path_component() {
+  local value="$1"
+  local lowered
+  lowered="$(printf "%s" "$value" | tr "[:upper:]" "[:lower:]")"
+  printf "%s" "$lowered" | tr -cs "a-z0-9._-" "_"
+}
+
+date_tag="${PROFILE_DATE_TAG:-$(date -u +%Y-%m-%d)}"
+time_tag="${PROFILE_TIME_TAG:-$(date -u +%H%M%S)}"
+run_tag="${PROFILE_RUN_TAG:-$time_tag}"
+
+hw_tag="${PROFILE_HW_TAG:-}"
+gpu_name=""
+gpu_cc=""
+if [[ -z "$hw_tag" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+  gpu_name="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1 || true)"
+  gpu_cc="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 || true)"
+  if [[ -n "$gpu_name" ]]; then
+    name_tag="$(sanitize_path_component "$gpu_name")"
+    if [[ -n "$gpu_cc" ]]; then
+      cc_tag="sm${gpu_cc//./}"
+      hw_tag="${name_tag}_${cc_tag}"
+    else
+      hw_tag="$name_tag"
+    fi
+  fi
+fi
+if [[ -z "$hw_tag" ]]; then
+  hw_tag="unknown"
+fi
+
+run_id="${PROFILE_RUN_NAME}_${run_tag}"
+run_dir="${OUT_DIR}/${date_tag}/${hw_tag}/${PROFILE_TOOL}/${run_id}"
+if ! mkdir -p "$run_dir"; then
+  echo "[error] unable to create profile output dir: $run_dir" >&2
+  echo "[error] set PROFILE_OUT_DIR to a writable path or fix permissions for $OUT_DIR" >&2
+  exit 1
+fi
+
+git_sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+config_sha="$(sha256sum "$CONFIG" | awk "{print \$1}")"
+tokenizer_sha="$(sha256sum "$TOKENIZER_MODEL" | awk "{print \$1}")"
+train_cmd_str=""
+printf -v train_cmd_str "%q " "${TRAIN_CMD[@]}"
+
+export PROFILE_META_PATH="${run_dir}/meta.json"
+export PROFILE_INDEX_PATH="${OUT_DIR}/index.jsonl"
+export PROFILE_RUN_DIR="$run_dir"
+export PROFILE_RUN_ID="$run_id"
+export PROFILE_RUN_TAG="$run_tag"
+export PROFILE_TIME_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+export PROFILE_GIT_SHA="$git_sha"
+export PROFILE_CONFIG_PATH="$CONFIG"
+export PROFILE_CONFIG_SHA256="$config_sha"
+export PROFILE_TOKENIZER_PATH="$TOKENIZER_MODEL"
+export PROFILE_TOKENIZER_SHA256="$tokenizer_sha"
+export PROFILE_TRAIN_CMD="$train_cmd_str"
+export PROFILE_HW_TAG="$hw_tag"
+export PROFILE_GPU_NAME="$gpu_name"
+export PROFILE_GPU_CC="$gpu_cc"
+export PROFILE_DP="$dp"
+export PROFILE_GLOBAL_BSZ="$global_bsz"
+
+python - <<PY
+import json
+import os
+
+def _as_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+meta = {
+    "created_utc": os.environ.get("PROFILE_TIME_ISO"),
+    "run_dir": os.environ.get("PROFILE_RUN_DIR"),
+    "run_id": os.environ.get("PROFILE_RUN_ID"),
+    "run_name": os.environ.get("PROFILE_RUN_NAME"),
+    "run_tag": os.environ.get("PROFILE_RUN_TAG"),
+    "profile_tool": os.environ.get("PROFILE_TOOL"),
+    "profile_step_start": _as_int(os.environ.get("PROFILE_PROFILE_STEP_START")),
+    "profile_step_end": _as_int(os.environ.get("PROFILE_PROFILE_STEP_END")),
+    "git_sha": os.environ.get("PROFILE_GIT_SHA"),
+    "config_path": os.environ.get("PROFILE_CONFIG_PATH"),
+    "config_sha256": os.environ.get("PROFILE_CONFIG_SHA256"),
+    "tokenizer_path": os.environ.get("PROFILE_TOKENIZER_PATH"),
+    "tokenizer_sha256": os.environ.get("PROFILE_TOKENIZER_SHA256"),
+    "transformer_impl": os.environ.get("PROFILE_TRANSFORMER_IMPL"),
+    "seq_len": _as_int(os.environ.get("PROFILE_SEQ_LEN")),
+    "micro_batch_size": _as_int(os.environ.get("PROFILE_MICRO_BATCH_SIZE")),
+    "global_batch_size": _as_int(os.environ.get("PROFILE_GLOBAL_BSZ")),
+    "nproc_per_node": _as_int(os.environ.get("PROFILE_NPROC_PER_NODE")),
+    "tp": _as_int(os.environ.get("PROFILE_TP")),
+    "pp": _as_int(os.environ.get("PROFILE_PP")),
+    "ep": _as_int(os.environ.get("PROFILE_EP")),
+    "dp": _as_int(os.environ.get("PROFILE_DP")),
+    "hw_tag": os.environ.get("PROFILE_HW_TAG"),
+    "gpu_name": os.environ.get("PROFILE_GPU_NAME"),
+    "gpu_cc": os.environ.get("PROFILE_GPU_CC"),
+    "train_cmd": os.environ.get("PROFILE_TRAIN_CMD", "").strip(),
+}
+
+with open(os.environ["PROFILE_META_PATH"], "w", encoding="utf-8") as f:
+    json.dump(meta, f, indent=2, sort_keys=True)
+
+index = {
+    "created_utc": meta["created_utc"],
+    "run_id": meta["run_id"],
+    "run_dir": meta["run_dir"],
+    "profile_tool": meta["profile_tool"],
+    "seq_len": meta["seq_len"],
+    "micro_batch_size": meta["micro_batch_size"],
+    "global_batch_size": meta["global_batch_size"],
+    "tp": meta["tp"],
+    "pp": meta["pp"],
+    "ep": meta["ep"],
+    "dp": meta["dp"],
+    "transformer_impl": meta["transformer_impl"],
+    "hw_tag": meta["hw_tag"],
+}
+
+with open(os.environ["PROFILE_INDEX_PATH"], "a", encoding="utf-8") as f:
+    f.write(json.dumps(index) + "\n")
+PY
 
 case "$PROFILE_TOOL" in
   nsys)
@@ -162,7 +319,7 @@ case "$PROFILE_TOOL" in
       echo "[error] nsys not found in container. Set PROFILE_TOOL=torch or install nsys in the image." >&2
       exit 1
     fi
-    out_prefix="$OUT_DIR/$PROFILE_RUN_NAME"
+    out_prefix="${run_dir}/trace"
     echo "[profile] writing: ${out_prefix}.qdrep" >&2
     exec nsys profile -s none -t nvtx,cuda \
       --cudabacktrace=all --cuda-graph-trace=node --python-backtrace=cuda --wait all \
@@ -171,7 +328,7 @@ case "$PROFILE_TOOL" in
       "${TRAIN_CMD[@]}"
     ;;
   torch)
-    tb_dir="$OUT_DIR/$PROFILE_RUN_NAME.tensorboard"
+    tb_dir="${run_dir}/tensorboard"
     mkdir -p "$tb_dir"
     TRAIN_CMD+=("--use-pytorch-profiler" "--tensorboard-dir" "$tb_dir")
     echo "[profile] writing torch traces under: $tb_dir" >&2

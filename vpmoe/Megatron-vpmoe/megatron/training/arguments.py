@@ -2210,6 +2210,18 @@ def _add_training_args(parser):
                        help='Use the built-in pytorch profiler. '
                        'Useful if you wish to view profiles in tensorboard.',
                        dest='use_pytorch_profiler')
+    group.add_argument(
+        '--profile-record-shapes',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Record shapes in the torch profiler (default: true).',
+    )
+    group.add_argument(
+        '--profile-with-stack',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Record Python stack traces in the torch profiler (default: true).',
+    )
     group.add_argument('--profile-ranks', nargs='+', type=int, default=[0],
                        help='Global ranks to profile.')
     group.add_argument('--record-memory-history', action="store_true", default=False,
