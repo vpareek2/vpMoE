@@ -26,6 +26,7 @@ If a change conflicts with these, treat it as a spec change: update the docs fir
 - No internal-only hostnames/IPs/paths in tracked files.
 - One supported execution path: **our** container setup. No parallel “just run it on the host” path unless explicitly opt-in and documented.
 - Keep surfaces small: no second stacks for the same use-case.
+- **Do not commit** unless the user explicitly asks for a commit/PR.
 
 ## Execution Environment
 
