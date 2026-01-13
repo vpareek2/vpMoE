@@ -12,11 +12,40 @@ For 80-90%:
 For 10-20%:
 - PrimeIntellect/Hendrycks-Math
 - qwedsacf/competition_math
--
 
 ## Code
 
+For 30%:
+nvidia/OpenCodeReasoning-2
+
+For 15%:
+nvidia/Nemotron-Comptetitive-Programming-v1
+
+For 35%:
+nvidia/OpenCodeInstruct
+
+For 10%:
+agentica-org/DeepCoder-Preview-Dataset
+
+For the rest - reserved for agentic maybe
+
 ## Personality
+
+My recommended B4 KD prompt mix to start “warm + intelligent”
+
+(Percentages are within B4, not global.)
+
+45% UltraChat 200k (sft prompts) — primary warm-chat backbone
+
+20% Nemotron post-train chat prompts — “friendly assistant” baseline + breadth
+
+15% OpenAssistant best-path prompts — realism + multi-turn variety
+
+10% Anthropic-helpful prompts (filtered) — helpfulness calibration (no red-team)
+
+5% Deita-10k — quality anchor
+
+5% Hermes function calling / JSON — “intelligent” structured behavior
 
 ## World Knowledge
 - PleIAs/SYNTH (everything is synthetic from wikipedia)
