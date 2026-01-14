@@ -6,7 +6,7 @@ services:
       args:
         # Override per-machine if needed:
         #   VPMOE_BASE_IMAGE=nvcr.io/nvidia/pytorch:<tag>
-        BASE_IMAGE: ${VPMOE_BASE_IMAGE:-nvcr.io/nvidia/pytorch:25.12-py3}
+        BASE_IMAGE: ${VPMOE_BASE_IMAGE:-nvcr.io/nvidia/vllm:25.12.post1-py3}
     image: vpmoe:latest
     working_dir: /workspace/vpmoe
     volumes:
@@ -14,6 +14,8 @@ services:
       - ../data:/data
     environment:
       HF_HOME: /data/hf_cache
+      TIKTOKEN_ENCODINGS_BASE: /data/hf_cache/tiktoken-encodings
+      TIKTOKEN_RS_CACHE_DIR: /data/hf_cache/tiktoken-rs-cache
       # NGC images can enforce GPU allowlists; DGX Spark (GB10) may require bypass.
       NVIDIA_DISABLE_REQUIRE: '1'
     gpus: all

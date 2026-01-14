@@ -1,56 +1,39 @@
-# DATASETS:
+# Prompt sources (draft)
 
-## General Reasoning
-- PleIAs/SYNTH
+We treat upstream datasets as **prompt pools** (not label pools). Teacher outputs provide the online KD signal.
 
-## Math
+## Global source mix (distillation phase)
 
-For 80-90%:
-- nvidia/Nemotron-Math-v2
-- open-r1/OpenR1-Math-220k
+### 80% — PleIAs/SYNTH (primary)
 
-For 10-20%:
-- PrimeIntellect/Hendrycks-Math
-- qwedsacf/competition_math
+SYNTH is the default prompt source for the main distillation phase due to consistently high prompt quality.
 
-## Code
+### 20% — Anchor prompts (diversity + hardness)
 
-For 30%:
-nvidia/OpenCodeReasoning-2
+We keep a small but non-trivial anchor stream to avoid single-dataset style lock-in and to cover harder / more realistic distributions.
 
-For 15%:
-nvidia/Nemotron-Comptetitive-Programming-v1
+* **8% Math-hard anchors**
 
-For 35%:
-nvidia/OpenCodeInstruct
+  * `nvidia/Nemotron-Math-v2`
+  * `PrimeIntellect/Hendrycks-Math` (small slice)
+  * `qwedsacf/competition_math` (small slice)
 
-For 10%:
-agentica-org/DeepCoder-Preview-Dataset
+* **6% Code anchors**
 
-For the rest - reserved for agentic maybe
+  * `nvidia/OpenCodeInstruct`
+  * `agentica-org/DeepCoder-Preview-Dataset` (tiny slice; strictly capped)
 
-## Personality
+* **4% Chat/helpfulness anchors**
 
-My recommended B4 KD prompt mix to start “warm + intelligent”
+  * `HuggingFaceH4/ultrachat_200k`
+  * `OpenAssistant/oasst1`
+  * `bcui19/chat-v2-anthropic-helpfulness` (small slice)
 
-(Percentages are within B4, not global.)
+* **2% Personality / roleplay anchors**
 
-45% UltraChat 200k (sft prompts) — primary warm-chat backbone
+  * (TBD: curated personality pool; keep small and high-quality)
 
-20% Nemotron post-train chat prompts — “friendly assistant” baseline + breadth
-
-15% OpenAssistant best-path prompts — realism + multi-turn variety
-
-10% Anthropic-helpful prompts (filtered) — helpfulness calibration (no red-team)
-
-5% Deita-10k — quality anchor
-
-5% Hermes function calling / JSON — “intelligent” structured behavior
-
-## World Knowledge
-- PleIAs/SYNTH (everything is synthetic from wikipedia)
-
-# Confirmed Data Pipeline Doc (DistillKit BF16 Phase)
+# Confirmed Data Pipeline Doc (online KD phase)
 
 ## 0) Purpose and scope
 
@@ -81,7 +64,7 @@ Implication:
 
 ## 2) Bucket taxonomy (skill buckets)
 
-We define **5 skill buckets**. Every example must belong to exactly one primary bucket.
+We define **4 skill buckets**. Every example must belong to exactly one primary bucket.
 
 ### B1 — General Reasoning
 
@@ -99,57 +82,54 @@ Code comprehension, debugging, algorithm reasoning, complexity/invariants, code-
 
 Tone, helpfulness, instruction-following, multi-turn coherency, refusal style, formatting compliance.
 
-### B5 — World Knowledge / Explanations
-
-Factual QA, concept explanations, “what is X” + “why” + “compare Y vs Z”, broad encyclopedic coverage.
-
 Notes:
 
-* “STEM explanations” that are not formal math belong in **World Knowledge** or **General Reasoning** depending on structure.
+* “World knowledge / explanations” is covered implicitly (primarily via SYNTH) and is treated as part of **General Reasoning** for now.
 * We intentionally separate Math vs Code to avoid dominance and to preserve specialization.
 
 ---
 
 ## 3) Context-length buckets (ctx buckets)
 
-We follow an Arcee-like strategy: **most tokens short/medium**, with a small long-context warm-up stage for KDA.
+We loosely follow the Arcee/DistillKit KDA recipe: do most KD at short context for throughput/stability, then do a dedicated long-context stage so the attention stack is exposed at the target length.
 
-### C1: 2K–4K (primary)
+### C1: 2K (primary distill)
 
-### C2: 4K–8K (secondary)
+### C2: 8K (bridge)
 
-### C3: 8K–16K (warm-up)
+### C3: 32K (long-context distill / adaptation)
 
-### C4: 16K–32K (tiny tail; optional)
+### C4: 64K+ (optional tail; only if we need it)
 
-Each example is assigned a `ctx_bucket` based on estimated packed length (prompt + expected completion).
+Each example is assigned a `ctx_bucket` based on estimated packed length (prompt + expected completion). For online KD, the dominant driver is the teacher completion length distribution + `max_new_tokens` caps.
 
 ---
 
-## 4) Token budget and target mixture (750M total)
+## 4) Token budget and target mixture (draft)
 
 We allocate quotas across skill and ctx buckets. Final numbers may be tuned after proxy runs.
 
 ### 4.1 Skill-bucket target mix (global)
 
-* B1 General Reasoning: 35–45%
-* B4 Personality/Policy: 20–30%
-* B2 Math/Formal: 10–20%
-* B3 Code: 10–20%
-* B5 World Knowledge: 10–20%
+* B1 General Reasoning: 50%
+* B2 Math / Formal Reasoning: 17.5%
+* B3 Code / Algorithmic Reasoning: 17.5%
+* B4 Personality / Assistant Policy: 15%
 
-### 4.2 Context-length target mix (global)
+### 4.2 Context-length target mix (curriculum-driven)
 
-* C1 2K–4K: ~80%
-* C2 4K–8K: ~13%
-* C3 8K–16K: ~6%
-* C4 16K–32K: ~1% (optional)
+Rather than enforcing a single global mix, we schedule context lengths over time:
+
+* **P1 (bootstrap):** C1 only (2K)
+* **P2 (bridge):** C1 + small C2 (8K)
+* **P3 (long-context):** primarily C3 (32K) with a small C1 tail for stability
+* **P4 (optional tail):** add C4 only if evaluation indicates we need >32K robustness
 
 ### 4.3 Quota grid
 
 We enforce quotas in the cross-product grid:
 
-* (B1..B5) × (C1..C4)
+* (B1..B4) × (C1..C4)
 
 This prevents the selector from collapsing into “only short math” or “only long summarization,” etc.
 
@@ -162,11 +142,12 @@ Dataset-provided answers/rationales may be used only as metadata or for optional
 
 Primary sources (for prompt pools):
 
-* PleIAs/SYNTH (broad reasoning/instruction)
-* NVIDIA OpenMathReasoning (math)
-* PrimeIntellect SYNTHETIC-2 (reasoning breadth)
-* OpenThoughts / OpenR1-Math (style + procedures)
-* (Optional) curated general/edu text sources for World Knowledge prompts
+* **PleIAs/SYNTH (~80%)**: the default distillation prompt stream.
+* **Anchor prompts (~20%)**: a small mix of math/code/chat/personality prompts for diversity and hardness (see “Prompt sources (draft)” above).
+
+Principle:
+
+* Prefer a single strong “main” prompt source (SYNTH) while keeping a thin, controlled anchor stream to prevent distribution collapse.
 
 ---
 
@@ -279,10 +260,10 @@ We do this sparingly (e.g., 1–5% of batches) to keep overhead low.
 
 ### 10.1 Context curriculum
 
-* Phase P1: C1 only (2K–4K) until stability
-* Phase P2: add C2 (4K–8K)
-* Phase P3: add C3 (8K–16K)
-* Phase P4: optional C4 tail (16K–32K)
+* Phase P1: C1 only (2K) until stability
+* Phase P2: add C2 (8K) as a bridge
+* Phase P3: shift to C3 (32K) for long-context adaptation
+* Phase P4: optional C4 tail (64K+) only if needed
 
 ### 10.2 Difficulty curriculum (within bucket)
 
@@ -291,6 +272,66 @@ Use `utility_score` and/or difficulty proxies to:
 * start mid difficulty (avoid pathological hard cases early)
 * then focus more on high-utility/hard cases later
 * preserve a diversity tail throughout
+
+### 10.3 Reasoning-effort policy (teacher runtime parameter)
+
+We treat `reasoning_effort` as a first-class knob and keep it bounded to avoid long-tail runaway costs.
+
+Default (most buckets):
+
+* low: 50%
+* medium: 40%
+* high: 10%
+
+Personality bucket override:
+
+* low: 70%
+* medium: 30%
+* high: 0%
+
+Caps + retry rule (draft):
+
+* low: `max_new_tokens=2048`
+* medium: `max_new_tokens=8192`
+* high: try `max_new_tokens=8192`, retry once at `32768` only if `final` is missing; drop if still missing
+
+Measured token lengths (probe):
+
+Token stats from a small, local Harmony probe run (`openai/gpt-oss-20b`, 23 prompts × {low, medium, high} = 69 runs; output: `data/teacher_runs_20b.jsonl`):
+
+* Totals: prompt tokens `12,510`, completion tokens `376,192` (analysis `297,694`, final `77,932`), total `388,702`
+* Completion length (all modes): p50 `1,524`, p90 `10,714`, p95 `35,499`, max `65,536`
+* Completion mean by `reasoning_effort`:
+
+  * low: ~`984`
+  * medium: ~`3,746`
+  * high: ~`11,627` (p90 ~`40k`, max hit cap `65,536` once; one run ended with no `final`)
+
+Implication:
+
+* If we apply `high` broadly without caps/retry/drop rules, it will dominate token budget due to long-tail outliers (notably DeepCoder-style code prompts and hard math).
+
+### 10.4 Token budget by stage (draft)
+
+We follow the Arcee/DistillKit KDA writeup as a rough reference point (they mention ~300M tokens for the initial KD phase, then ~1B tokens at 32k context for long-context adaptation).
+
+For our first full run, target **~1.3B total training tokens**, split by context stage:
+
+* **P1 (2K): 300M tokens**
+* **P2 (8K): 150M tokens** (bridge)
+* **P3 (32K): 850M tokens** (long-context adaptation)
+* **P4 (64K+): 0–100M tokens** (optional; only if eval indicates >32K weakness)
+
+Sanity check (approx packed sequences processed, assuming packing fills sequences near `sequence_length`):
+
+* P1: `300M / 2048` ≈ `146k` sequences
+* P2: `150M / 8192` ≈ `18k` sequences
+* P3: `850M / 32768` ≈ `26k` sequences
+
+Notes:
+
+* The **80% SYNTH / 20% anchors** source mix stays constant across stages; only `sequence_length` (and packing) changes.
+* These are **student training tokens** (i.e., tokens consumed by the training loop). Online teacher forward-pass cost scales with the same token count; no teacher generation is assumed for the main run.
 
 ---
 
@@ -305,7 +346,7 @@ Store as Parquet (preferred) or JSONL with these fields:
 
 ### Buckets
 
-* `skill_bucket` ∈ {B1..B5}
+* `skill_bucket` ∈ {B1..B4}
 * `ctx_bucket` ∈ {C1..C4}
 
 ### Prompt

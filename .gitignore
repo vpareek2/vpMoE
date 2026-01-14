@@ -4,6 +4,7 @@
 
 ref/
 __pycache__/
+.pytest_cache/
 
 *.parquet
 *.safetensors
@@ -16,6 +17,7 @@ data/hf_cache/
 data/manifests/
 data/eval_bundle/
 data/eval_bundle.zip
+data/teacher_runs*.jsonl
 
 # Large local model artifacts (never commit)
 weights/
