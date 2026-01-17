@@ -1,6 +1,8 @@
-# Prompt sources (draft)
+# Dataset sources (draft)
 
-We treat upstream datasets as **prompt pools** (not label pools). Teacher outputs provide the online KD signal.
+We treat upstream datasets as **sequence pools**: each training example is a full Harmony sequence
+(system + user + assistant). During training, the **teacher runs a forward pass over the same
+`input_ids`** to provide logits (and optionally hidden states) for KD, exactly as DistillKit does.
 
 ## Global source mix (distillation phase)
 
@@ -37,7 +39,7 @@ We keep a small but non-trivial anchor stream to avoid single-dataset style lock
 
 ## 0) Purpose and scope
 
-This pipeline builds a curated, continuously re-weighted prompt stream for **online knowledge distillation** (KD) from **GPT-OSS** into a student with attention surgery (SWA-128 + TPA + KDA).
+This pipeline builds a curated, continuously re-weighted **sequence stream** for **online knowledge distillation** (KD) from **GPT-OSS** into a student with attention surgery (SWA-128 + TPA + KDA).
 We assume upstream datasets are already high-quality; our goal is **maximize learning per token** via mixture control, redundancy control, and distillation-aware data valuation.
 
 Non-goals for this phase:
@@ -52,13 +54,15 @@ Non-goals for this phase:
 
 Training uses **online distillation**:
 
-* For each training example, we feed the same Harmony prompt to **teacher** and **student**.
-* We compute KD losses from teacher outputs/logits on-the-fly and update the student only.
+* For each training example, we feed the same Harmony token sequence (`input_ids`) to **teacher** and **student**.
+* We compute KD losses from teacher logits (and optional hidden states) on-the-fly and update the student only.
+* The teacher does **not** generate new tokens during training (teacher-forced distillation over fixed sequences).
 
 Implication:
 
-* The dataset is primarily a **prompt distribution**.
-* “Targets” come from GPT-OSS during training (teacher policy), not from dataset-provided answers.
+* The dataset defines a **full sequence distribution** (prompt + assistant).
+* The assistant tokens come from the dataset (e.g., SYNTH `synthetic_reasoning`/`synthetic_answer`, code `output`, etc.).
+* GPT-OSS provides **soft targets** (logits/hidden states) via a forward pass over those same tokens.
 
 ---
 
@@ -101,7 +105,9 @@ We loosely follow the Arcee/DistillKit KDA recipe: do most KD at short context f
 
 ### C4: 64K+ (optional tail; only if we need it)
 
-Each example is assigned a `ctx_bucket` based on estimated packed length (prompt + expected completion). For online KD, the dominant driver is the teacher completion length distribution + `max_new_tokens` caps.
+Each example is assigned a `ctx_bucket` based on estimated packed length (prompt + assistant).
+For teacher-forced online KD, the dominant driver is the **dataset sequence length distribution**
+(plus any preprocessing/training-time max-length caps), not generation settings like `max_new_tokens`.
 
 ---
 
@@ -137,12 +143,12 @@ This prevents the selector from collapsing into “only short math” or “only
 
 ## 5) Input data strategy (high-quality sources)
 
-We treat upstream datasets as *prompt pools* (not label pools).
-Dataset-provided answers/rationales may be used only as metadata or for optional evaluation; teacher provides the KD signal online.
+We treat upstream datasets as **full sequence pools** (not prompt-only pools).
+Dataset-provided assistant content is part of the training sequence; the teacher provides the KD signal online via forward pass.
 
-Primary sources (for prompt pools):
+Primary sources (for sequence pools):
 
-* **PleIAs/SYNTH (~80%)**: the default distillation prompt stream.
+* **PleIAs/SYNTH (~80%)**: the default distillation sequence stream.
 * **Anchor prompts (~20%)**: a small mix of math/code/chat/personality prompts for diversity and hardness (see “Prompt sources (draft)” above).
 
 Principle:
@@ -163,10 +169,10 @@ All examples are stored as Harmony message arrays.
 
 ### 6.2 Distillation record
 
-During training, teacher generates:
+During training, we use the dataset-provided assistant spans (analysis and/or final). The teacher provides:
 
-* `assistant:analysis`
-* `assistant:final`
+* per-token logits (always, in online KD)
+* optional hidden states (when enabled)
 
 We record token-span masks for analysis/final for loss weighting.
 

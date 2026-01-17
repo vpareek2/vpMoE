@@ -1,24 +1,30 @@
-# vpmoe-research: What We’re Building
+# vpMoE (research)
 
-We are building **vpMoE**: an ultra-sparse nano-MoE base model trained primarily via **distillation** from **GPT‑OSS‑120B**, using **Megatron‑LM** as the training backbone.
+We are building **vpMoE**: a sparse MoE base model trained via **DistillKit-style distillation** from **GPT‑OSS**, using **Megatron‑LM** as the training backbone.
 
-Your goal is to build production-grade systems—data preprocessing, teacher scoring, Megatron integration, training orchestration, checkpointing, evaluation, diagnostics—that are reliable and fast enough to run serious experiments without heroics.
+This repo is currently focused on **data preprocessing + teacher-forced distillation mechanics**:
+- We build datasets as **full token sequences** (system + user + assistant).
+- During training, the **teacher runs a forward pass over the same `input_ids`** to provide logits (and optionally hidden states), exactly as DistillKit does.
+- Loss is computed **only on assistant tokens** via `labels == -100` masking on non-assistant spans.
 
-This means: no fallbacks, no hacks, no shortcuts. Production-grade, Google-quality code that at all times demonstrates a maniacal obsession with elegant minimalism.
+Goal: production-grade systems—data preprocessing, teacher scoring, Megatron integration, training orchestration, checkpointing, evaluation, diagnostics—that are reliable and fast enough to run serious experiments without heroics.
 
-## Current Locked Decisions
+No fallbacks, no hacks, no shortcuts. Keep surfaces small and control flow explicit.
 
-Source of truth lives in:
-- `docs/architecture.md`
-- `docs/distillation_strategy.md`
+## Source Of Truth (current)
 
-Locked for the baseline:
-- **Teacher:** GPT‑OSS‑120B only
-- **Tokenizer:** o200k Harmony (padded vocab size **201088**)
-- **Base KD dataset:** PleIAs/SYNTH (for base KD phases)
-- **Student architecture:** locked as specified in `docs/architecture.md`
+- Container runbook: `docs/docker.md`
+- Distillation semantics: `src/data/distillation_mechanics.md`
+- PleIAs/SYNTH preprocessing contract: `src/data/synth_preprocess.md`
 
-If a change conflicts with these, treat it as a spec change: update the docs first.
+If you change a workflow or contract, update the relevant doc(s) in the same patch.
+
+## Current Locked Decisions (baseline)
+
+- **Teacher:** GPT‑OSS (primary teacher is 120B; 20B may be used for fast iteration/probing)
+- **Tokenizer / format:** o200k Harmony (`openai_harmony` / `HARMONY_GPT_OSS`, padded vocab size **201088**)
+- **Distillation mode (this phase):** teacher-forced forward-pass distillation (no online rollouts/generation inside the training loop)
+- **Loss masking:** prompt/system/user tokens must be masked from loss; assistant tokens are the only supervised region
 
 ## Public Repo Contract (Follow Even While Private)
 
