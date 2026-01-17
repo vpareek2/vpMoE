@@ -4,6 +4,20 @@ This directory documents how we build the **Phase 1 (8k)** distillation datasets
 
 Outputs are written to `/data/distillation_1/...` inside the container.
 
+## Canonical Phase‑1 training dataset (what to train on)
+
+The canonical, interleaved Phase‑1 dataset directory is:
+
+- `/data/distillation_1/phase1_mix_8k_665m`
+
+This is built by merging the component datasets below with:
+
+```
+scripts/run_phase1_merge_8k_665m.sh
+```
+
+Do not point training at the older `/data/distillation_1/phase1_mix_8k` output (it was an earlier merge run).
+
 ## What was built
 - Output format: DistillKit-ready parquet shards (`train/`, `validation/`), with:
   - `input_ids` (Harmony tokens)
@@ -48,6 +62,8 @@ while IFS= read -r p; do
   if [[ "$p" == /* ]]; then
     src="$p"
   else
+    # `synth_phase1_shards.txt` is a list of filenames like `synth_010.parquet`.
+    # Resolve relative entries under `/data/pleias_synth` (usually a symlink to `/datasets/PleIAs_synth`).
     src="/data/pleias_synth/$p"
   fi
   ln -sf "$src" "/data/synth_phase1/$b"
@@ -109,8 +125,8 @@ PYARROW_NUM_THREADS=20 OMP_NUM_THREADS=20 python3 scripts/build_nemotron_math_di
   --drop-tool-rows
 ```
 
-### 4) Helpfulness / assistant style — OpenAssistant/oasst2 (TODO)
-This is the planned “soft skills” slice. Use the OASST2 builder to extract prompt→best-assistant pairs.
+### 4) Helpfulness / assistant style — OpenAssistant/oasst2
+This is the lightweight “soft skills” slice. The builder extracts prompt→assistant pairs from OASST2.
 
 Build command (reference)
 ```
@@ -122,6 +138,9 @@ PYARROW_NUM_THREADS=20 OMP_NUM_THREADS=20 python3 scripts/build_oasst2_distill.p
   --english-frac 0.90 \
   --reasoning-level high
 ```
+
+Note:
+- The dataset is finite; `--target-total-tokens` is a cap, not a guarantee. The builder will stop early if it exhausts the source.
 
 ## Optional: single interleaved Phase‑1 dataset directory
 
@@ -138,7 +157,7 @@ PYARROW_NUM_THREADS=20 OMP_NUM_THREADS=20 python3 scripts/merge_distill_datasets
   --input code=/data/distillation_1/code_opencodeinstruct_55m \
   --input math=/data/distillation_1/math_nemotron_v2_low_55m \
   --input chat=/data/distillation_1/helpfulness_oasst2_15m \
-  --output-dir /data/distillation_1/phase1_mix_8k \
+  --output-dir /data/distillation_1/phase1_mix_8k_665m \
   --weight-by assistant_tokens \
   --seed 1337
 ```
@@ -148,4 +167,4 @@ Helper script (same as above + stats + samples):
 scripts/run_phase1_merge_8k_665m.sh
 ```
 
-After that, you can point training at `/data/distillation_1/phase1_mix_8k` and ignore the individual roots.
+After that, you can point training at `/data/distillation_1/phase1_mix_8k_665m` and ignore the individual roots.
