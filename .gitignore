@@ -8,16 +8,18 @@ __pycache__/
 
 *.parquet
 *.safetensors
-data/synth_dev/
-data/megatron/
-data/**/cache_*/
-data/**/cache/
-data/corpora/
-data/hf_cache/
-data/manifests/
-data/eval_bundle/
-data/eval_bundle.zip
-data/teacher_runs*.jsonl
+
+# Local-only data scratch by default. Keep only small docs/lists tracked.
+data/*
+!data/distillation_1/
+data/distillation_1/*
+!data/distillation_1/README.md
+!data/distillation_1/*_shards.txt
+!data/distillation_long_ctx_2/
+data/distillation_long_ctx_2/*
+!data/distillation_long_ctx_2/README.md
+
+/docker/compose.local.yml
 
 # Large local model artifacts (never commit)
 weights/

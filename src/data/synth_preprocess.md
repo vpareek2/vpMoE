@@ -2,6 +2,8 @@
 
 This document defines the **canonical preprocessing contract** for turning the local PleIAs/SYNTH Parquet shards into a dataset that can be consumed by **DistillKit** in the same “teacher-forced distillation over existing sequences” style used in Arcee’s example runs.
 
+For the general “how distillation works” mechanics (online vs offline, teacher-forced vs rollout), see `src/data/distillation_mechanics.md`.
+
 ## Goals
 
 - Use **PleIAs/SYNTH** as the primary distillation corpus.
@@ -33,9 +35,26 @@ We assume each row provides at least:
 - `synthetic_answer` (string)
 - `constraints` (string; used **only** for filtering, not rendered)
 
-## Output: training JSONL schema (canonical)
+## Output: training dataset schema (canonical)
 
-One JSON object per **unpacked example** (i.e., one conversation). We intentionally keep this schema small.
+One record per **unpacked example** (i.e., one conversation). We intentionally keep this schema small.
+
+**Storage layout**
+
+```
+<output_dir>/
+  train/part-00000.parquet
+  validation/part-00000.parquet
+  manifest.json
+```
+
+**Canonical build command**
+
+```bash
+python3 scripts/build_synth_distill.py \
+  --input-dir /path/to/pleias_synth \
+  --output-dir /path/to/output/synth_distill
+```
 
 ```json
 {
@@ -103,9 +122,35 @@ Notes:
 - Use the **same tokenizer/chat template** that DistillKit will use at training time (i.e., the model tokenizer).
 - The resulting tokenization must be compatible with GPT‑OSS Harmony expectations.
 
+Implementation detail (current implementation):
+- Tokenize the prompt with `render_conversation_for_completion(..., Role.ASSISTANT)` to define `assistant_token_start`.
+- Tokenize the full example with `render_conversation_for_training(...)` using `auto_drop_analysis=false` so analysis tokens are kept.
+
 Implementation detail is intentionally left to the preprocessing script, but the contract is:
 - The rendered tokens must preserve an explicit distinction between assistant analysis vs final **if** the tokenizer/template supports it.
 - If not, we still keep `analysis_token_count`/`final_token_count` consistent with whatever representation we emit.
+
+## Implementation overview (build_synth_distill.py)
+
+The builder is intentionally minimal and deterministic:
+
+1) **Scan pass (counts)** — apply the quality filters and collect counts by `exercise` and `language`.
+2) **Sampling plan** — compute keep rates to hit targets:
+   - memorization keep rate to cap `exercise==memorization` at ≤70%
+   - non‑EN keep rate to cap non‑English at ~25–30%
+3) **Build pass** — stream rows and, for each row that passes quality filters:
+   - apply deterministic hash sampling for memorization and non‑EN
+   - render the prompt (`query` + `Reference:` + `query_seed_text`)
+   - render Harmony tokens with assistant `analysis` (if present) then `final`
+   - compute `labels` mask and `spans`
+   - sanitize invalid Unicode (NULs / surrogates) before Harmony rendering
+   - drop if `len(input_ids) > max_seq_len`
+   - assign split by deterministic hash (99/1)
+4) **Write outputs** — sharded Parquet for train/validation + `manifest.json`.
+
+`manifest.json` records config, sampling rates, token length stats, and a `git_sha` for provenance.
+If Harmony rendering fails for some rows, they are dropped and counted; you can capture a sample of failures
+with `--encoding-errors-log`.
 
 ## Filtering policy (cheap quality wins)
 
@@ -125,10 +170,17 @@ We do **not** otherwise “fix” answers.
 SYNTH can be highly imbalanced by `exercise` within individual shards.
 
 Decisions:
-- Keep the dataset **English-heavy**, but preserve a small multilingual tail.
-  - Target: predominantly `language=="en"` with a controlled sample from other languages.
-- Apply **exercise-aware sampling** so the effective training set is not dominated by `exercise=="memorization"` alone.
-  - Exact quotas are a pipeline knob, but the selector must be able to enforce caps/targets by `(exercise, language)`.
+- Keep the dataset **English-heavy** with a small multilingual tail.
+  - Target: **~70–75% English** (cap non‑EN to ~25–30%).
+- Cap the memorization skew:
+  - Target: **≤70%** `exercise=="memorization"` after sampling.
+- Use a deterministic global downsample (`--global-keep`) when we want to hit a fixed token budget without changing shard selection.
+
+## Train/val split + max length
+
+- **Split:** 99% train / 1% validation (deterministic hash on `synth_id`).
+- **Max sequence length (phase 1):** 8192 tokens.
+  - If an example exceeds this, it is **dropped** for phase 1.
 
 ## Packing strategy (Arcee-style intent)
 
@@ -139,11 +191,8 @@ We will follow the “Arcee intent”:
 - rely on a single canonical preprocessing pipeline,
 - keep this file as the spec for how examples are rendered/masked.
 
-Whether we:
-- (A) output **unpacked examples** (this JSONL) and let training pack, or
-- (B) output **prepacked fixed-length** sequences and set `dataset.prepacked: true`,
-
-is an implementation choice; both must preserve the assistant-only label mask semantics.
+We output **unpacked examples** and let training-time packing handle throughput. This keeps
+the dataset compact and avoids prepack-specific attention-mask logic in preprocessing.
 
 ## Why SYNTH works with DistillKit (and why this mirrors Arcee)
 
@@ -152,4 +201,3 @@ Like Arcee’s example (e.g. distilling on Tulu-style sequences), we are:
 - using the teacher as a **forward-pass signal source** over the provided tokens.
 
 This is “teacher-forced distillation on an off-policy sequence distribution,” which is exactly what DistillKit implements.
-

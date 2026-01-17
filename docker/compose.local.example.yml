@@ -1,0 +1,6 @@
+# Local-only overrides (copy to docker/compose.local.yml and edit).
+services:
+  vpmoe:
+    volumes:
+      # Mount PleIAs/SYNTH from the host into the container.
+      - /path/to/PleIAs_synth:/data/pleias_synth:ro
