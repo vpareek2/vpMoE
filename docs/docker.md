@@ -4,6 +4,19 @@ vpMoE is **container-first**. All supported workflows should run inside the repo
 
 ## Build
 
+### Vendored Transformers (Required)
+
+This repo expects a local Transformers source checkout at `src/third_party/transformers`, installed into the container as the `transformers` package. This keeps GPT-OSS customization in a single, reproducible codebase without import shims.
+
+Clone (pin to the same commit/tag as the container expects):
+
+```bash
+mkdir -p src/third_party
+git clone https://github.com/huggingface/transformers.git src/third_party/transformers
+cd src/third_party/transformers
+git checkout v4.57.6
+```
+
 ```bash
 docker compose -f docker/compose.yml build vpmoe
 ```

@@ -5,6 +5,7 @@
 
 click>=8.2.1
 datasets>=4.4.2
+flash-linear-attention==0.4.1
 huggingface_hub>=0.20.0
 immutables>=0.21
 #
@@ -16,5 +17,7 @@ safetensors>=0.5.2
 tiktoken>=0.12.0
 tokenizers>=0.20.1
 tqdm>=4.67.1
-transformers>=4.57.0
 accelerate
+
+# NOTE: transformers is installed from the vendored source checkout at
+# `src/third_party/transformers` (see `docs/docker.md`).

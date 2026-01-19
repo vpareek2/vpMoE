@@ -20,6 +20,14 @@ RUN python3 -m pip install --upgrade pip && \
 
 COPY . /workspace/vpmoe
 
+RUN if [[ ! -d src/third_party/transformers ]]; then \
+      echo "ERROR: Missing vendored Transformers checkout at src/third_party/transformers." >&2; \
+      echo "Clone it (pinned) before building the container. See docs/docker.md." >&2; \
+      exit 1; \
+    fi && \
+    python3 -m pip uninstall -y transformers || true && \
+    python3 -m pip install --no-cache-dir -e src/third_party/transformers
+
 ENV PYTHONPATH=/workspace/vpmoe:/workspace/vpmoe/vpmoe/Megatron-vpmoe
 
 CMD ["/bin/bash"]

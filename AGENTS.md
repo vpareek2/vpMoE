@@ -46,13 +46,7 @@ If you change a workflow or contract, update the relevant doc(s) in the same pat
 - If you need to see any previous research code, ask. Do not make any assumptions
 - Keep runnable entrypoints few and obvious (e.g. `scripts/` + `configs/`).
 - Every supported workflow has exactly one canonical way to run it (dataset prep, teacher scoring, offline KD training, OPD training, eval).
-
-## Megatron‑LM Integration Contract
-
-- Prefer integrating vpMoE by **adding minimal, well-scoped code** around Megatron rather than forking large subsystems.
-- If we must modify vendored upstream code, keep patches surgical and documented (what/why), and avoid sprawling divergence.
-- No silent downgrades: if a feature is unsupported in our path, fail fast with an actionable error.
-
+- 
 ## Distillation Contract (Data + Losses)
 
 - Training examples must define prompt vs assistant spans; user/prompt tokens must be masked from loss.

@@ -1,0 +1,737 @@
+# coding=utf-8
+# Copyright 2025 The vpMoE authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""vpMoE modeling (GPT-OSS backbone + TPA/KDA hybrid attention)."""
+
+from __future__ import annotations
+
+from typing import Callable, Optional, Union
+
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+from transformers.generation import GenerationMixin
+from transformers.integrations.hub_kernels import use_kernel_forward_from_hub
+from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
+from transformers.modeling_layers import GenericForSequenceClassification, GenericForTokenClassification
+from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
+from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
+from transformers.processing_utils import Unpack
+from transformers.utils import TransformersKwargs, auto_docstring, can_return_tuple
+from transformers.utils.deprecation import deprecate_kwarg
+from transformers.utils.generic import OutputRecorder, check_model_inputs
+
+from .configuration_vpmoe import VpMoEConfig
+
+try:
+    from fla.layers.kda import KimiDeltaAttention
+    from fla.models.utils import Cache
+except ImportError as exc:
+    raise ImportError(
+        "flash-linear-attention is required for vpMoE KDA layers. "
+        "Install from src/third_party/flash-linear-attention (e.g., pip install -e <path>)."
+    ) from exc
+
+
+_ATTN_IMPLS = {"tpa", "kda"}
+
+
+@use_kernel_forward_from_hub("RMSNorm")
+class VpMoERMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return (self.weight * hidden_states).to(input_dtype)
+
+    def extra_repr(self):
+        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
+
+
+class VpMoEExperts(nn.Module):
+    def __init__(self, config: VpMoEConfig):
+        super().__init__()
+        self.intermediate_size = config.intermediate_size
+        self.num_experts = config.num_local_experts
+        self.hidden_size = config.hidden_size
+        self.expert_dim = self.intermediate_size
+        self.gate_up_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, 2 * self.expert_dim))
+        self.gate_up_proj_bias = nn.Parameter(torch.empty(self.num_experts, 2 * self.expert_dim))
+        self.down_proj = nn.Parameter(torch.empty((self.num_experts, self.expert_dim, self.hidden_size)))
+        self.down_proj_bias = nn.Parameter(torch.empty(self.num_experts, self.hidden_size))
+        self.alpha = 1.702
+        self.limit = 7.0
+
+    def forward(self, hidden_states: torch.Tensor, router_indices=None, routing_weights=None) -> torch.Tensor:
+        batch_size = hidden_states.shape[0]
+        hidden_states = hidden_states.reshape(-1, self.hidden_size)
+        num_experts = routing_weights.shape[1]
+        if hidden_states.device.type == "cpu" or self.training:
+            next_states = torch.zeros_like(hidden_states, dtype=hidden_states.dtype, device=hidden_states.device)
+            with torch.no_grad():
+                expert_mask = torch.nn.functional.one_hot(router_indices, num_classes=num_experts + 1)
+                expert_mask = expert_mask.permute(2, 1, 0)
+                expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
+            for expert_idx in expert_hit[:]:
+                expert_idx = expert_idx[0]
+                if expert_idx == num_experts:
+                    continue
+                with torch.no_grad():
+                    _, token_idx = torch.where(expert_mask[expert_idx])
+                current_state = hidden_states[token_idx]
+                gate_up = current_state @ self.gate_up_proj[expert_idx] + self.gate_up_proj_bias[expert_idx]
+                gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+                gate = gate.clamp(min=None, max=self.limit)
+                up = up.clamp(min=-self.limit, max=self.limit)
+                glu = gate * torch.sigmoid(gate * self.alpha)
+                gated_output = (up + 1) * glu
+                out = gated_output @ self.down_proj[expert_idx] + self.down_proj_bias[expert_idx]
+                weighted_output = out * routing_weights[token_idx, expert_idx, None]
+                next_states.index_add_(0, token_idx, weighted_output.to(hidden_states.dtype))
+            next_states = next_states.view(batch_size, -1, self.hidden_size)
+        else:
+            hidden_states = hidden_states.repeat(num_experts, 1)
+            hidden_states = hidden_states.view(num_experts, -1, self.hidden_size)
+            gate_up = torch.bmm(hidden_states, self.gate_up_proj) + self.gate_up_proj_bias[..., None, :]
+            gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+            gate = gate.clamp(min=None, max=self.limit)
+            up = up.clamp(min=-self.limit, max=self.limit)
+            glu = gate * torch.sigmoid(gate * self.alpha)
+            next_states = torch.bmm(((up + 1) * glu), self.down_proj)
+            next_states = next_states + self.down_proj_bias[..., None, :]
+            next_states = next_states.view(num_experts, batch_size, -1, self.hidden_size)
+            next_states = next_states * routing_weights.transpose(0, 1).view(num_experts, batch_size, -1)[..., None]
+            next_states = next_states.sum(dim=0)
+        return next_states
+
+
+class VpMoETopKRouter(nn.Module):
+    def __init__(self, config: VpMoEConfig):
+        super().__init__()
+        self.top_k = config.num_experts_per_tok
+        self.num_experts = config.num_local_experts
+        self.hidden_dim = config.hidden_size
+        self.weight = nn.Parameter(torch.empty(self.num_experts, self.hidden_dim))
+        self.bias = nn.Parameter(torch.empty(self.num_experts))
+
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight, self.bias)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)
+        router_top_value = torch.nn.functional.softmax(router_top_value, dim=1, dtype=router_top_value.dtype)
+        router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
+        return router_scores, router_indices
+
+
+@use_kernel_forward_from_hub("MegaBlocksMoeMLP")
+class VpMoEMLP(nn.Module):
+    def __init__(self, config: VpMoEConfig):
+        super().__init__()
+        self.router = VpMoETopKRouter(config)
+        self.experts = VpMoEExperts(config)
+
+    def forward(self, hidden_states):
+        router_scores, router_indices = self.router(hidden_states)
+        routed_out = self.experts(hidden_states, router_indices=router_indices, routing_weights=router_scores)
+        return routed_out, router_scores
+
+
+class VpMoERotaryEmbedding(nn.Module):
+    inv_freq: torch.Tensor
+
+    def __init__(self, config: VpMoEConfig, device=None):
+        super().__init__()
+        if hasattr(config, "rope_scaling") and isinstance(config.rope_scaling, dict):
+            self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
+        else:
+            self.rope_type = "default"
+        self.max_seq_len_cached = config.max_position_embeddings
+        self.original_max_seq_len = config.max_position_embeddings
+
+        self.config = config
+        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+
+        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.original_inv_freq = self.inv_freq
+
+    @torch.no_grad()
+    @dynamic_rope_update
+    def forward(self, x, position_ids):
+        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
+        position_ids_expanded = position_ids[:, None, :].float()
+
+        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
+        with torch.autocast(device_type=device_type, enabled=False):
+            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+            emb = freqs
+            cos = emb.cos() * self.attention_scaling
+            sin = emb.sin() * self.attention_scaling
+
+        return cos.to(x.dtype), sin.to(x.dtype)
+
+
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    if n_rep == 1:
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+
+
+def _apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    first_half, second_half = torch.chunk(x, 2, dim=-1)
+    first_ = first_half * cos - second_half * sin
+    second_ = second_half * cos + first_half * sin
+    return torch.cat((first_, second_), dim=-1)
+
+
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    q_embed = _apply_rotary_emb(q, cos, sin)
+    k_embed = _apply_rotary_emb(k, cos, sin)
+    return q_embed, k_embed
+
+
+def tpa_eager_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    dropout: float = 0.0,
+    s_aux: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    attn_logits = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    if attention_mask is not None:
+        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+        attn_logits = attn_logits + causal_mask
+
+    attn_weights = torch.softmax(attn_logits, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+    attn_output = torch.matmul(attn_weights, value_states)
+
+    if s_aux is not None:
+        log_z = torch.logsumexp(attn_logits.float(), dim=-1)
+        sinks = s_aux.view(1, -1, 1).to(log_z.dtype)
+        gate = torch.sigmoid(log_z - sinks)
+        attn_output = attn_output * gate.to(attn_output.dtype).unsqueeze(-1)
+
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    return attn_output, attn_weights
+
+
+class VpMoETPAAttention(nn.Module):
+    def __init__(self, config: VpMoEConfig, layer_idx: int):
+        super().__init__()
+        self.config = config
+        self.layer_idx = layer_idx
+        self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+        self.num_heads = config.num_attention_heads
+        self.num_key_value_heads = config.num_key_value_heads
+        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+        self.scaling = self.head_dim**-0.5
+        self.attention_dropout = config.attention_dropout
+        self.is_causal = True
+        self.q_rank = config.tpa_q_rank
+        self.rank = config.tpa_rank
+        self.sliding_window = config.sliding_window if config.layer_types[layer_idx] == "sliding_attention" else None
+
+        self.W_A_q = nn.Linear(config.hidden_size, self.num_heads * self.q_rank, bias=False)
+        self.W_A_k = nn.Linear(config.hidden_size, self.num_key_value_heads * self.rank, bias=False)
+        self.W_A_v = nn.Linear(config.hidden_size, self.num_key_value_heads * self.rank, bias=False)
+        self.W_B_q = nn.Linear(config.hidden_size, self.q_rank * self.head_dim, bias=False)
+        self.W_B_k = nn.Linear(config.hidden_size, self.rank * self.head_dim, bias=False)
+        self.W_B_v = nn.Linear(config.hidden_size, self.rank * self.head_dim, bias=False)
+        self.o_proj = nn.Linear(self.num_heads * self.head_dim, config.hidden_size, bias=config.attention_bias)
+        self.sinks = nn.Parameter(torch.empty(self.num_heads))
+
+    @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor],
+        past_key_values: Optional[Cache] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs: Unpack[TransformersKwargs],
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+        batch_size, seq_len, _ = hidden_states.shape
+
+        A_q = self.W_A_q(hidden_states).view(batch_size, seq_len, self.num_heads, self.q_rank)
+        A_k = self.W_A_k(hidden_states).view(batch_size, seq_len, self.num_key_value_heads, self.rank)
+        A_v = self.W_A_v(hidden_states).view(batch_size, seq_len, self.num_key_value_heads, self.rank)
+
+        B_q = self.W_B_q(hidden_states).view(batch_size, seq_len, self.q_rank, self.head_dim)
+        B_k = self.W_B_k(hidden_states).view(batch_size, seq_len, self.rank, self.head_dim)
+        B_v = self.W_B_v(hidden_states).view(batch_size, seq_len, self.rank, self.head_dim)
+
+        cos, sin = position_embeddings
+        B_q, B_k = apply_rotary_pos_emb(B_q, B_k, cos, sin, unsqueeze_dim=2)
+
+        A_q = A_q.view(batch_size * seq_len, self.num_heads, self.q_rank)
+        A_k = A_k.view(batch_size * seq_len, self.num_key_value_heads, self.rank)
+        A_v = A_v.view(batch_size * seq_len, self.num_key_value_heads, self.rank)
+
+        B_q = B_q.view(batch_size * seq_len, self.q_rank, self.head_dim)
+        B_k = B_k.view(batch_size * seq_len, self.rank, self.head_dim)
+        B_v = B_v.view(batch_size * seq_len, self.rank, self.head_dim)
+
+        q = torch.bmm(A_q, B_q).div_(self.q_rank).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        k = torch.bmm(A_k, B_k).div_(self.rank).view(batch_size, seq_len, self.num_key_value_heads, self.head_dim)
+        v = torch.bmm(A_v, B_v).div_(self.rank).view(batch_size, seq_len, self.num_key_value_heads, self.head_dim)
+
+        query_states = q.transpose(1, 2)
+        key_states = k.transpose(1, 2)
+        value_states = v.transpose(1, 2)
+
+        if past_key_values is not None:
+            cache_has_content = past_key_values.get_seq_length(self.layer_idx) > 0
+            state = past_key_values.update(
+                attn_state=(
+                    key_states.transpose(1, 2).reshape(batch_size, seq_len, -1),
+                    value_states.transpose(1, 2).reshape(batch_size, seq_len, -1),
+                ),
+                layer_idx=self.layer_idx,
+                offset=seq_len,
+                cache_kwargs={"window_size": self.sliding_window},
+            )
+            if cache_has_content:
+                k_cached, v_cached = state["attn_state"]
+                key_states = k_cached.view(batch_size, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+                value_states = v_cached.view(batch_size, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+
+        attention_interface: Callable = tpa_eager_attention_forward
+        if self.config._attn_implementation != "eager":
+            attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=0.0 if not self.training else self.attention_dropout,
+            scaling=self.scaling,
+            sliding_window=self.sliding_window,
+            s_aux=self.sinks,
+            cache_position=cache_position,
+            **kwargs,
+        )
+
+        attn_output = attn_output.reshape(batch_size, seq_len, -1).contiguous()
+        attn_output = self.o_proj(attn_output)
+        return attn_output, attn_weights
+
+
+class VpMoEDecoderLayer(nn.Module):
+    def __init__(self, config: VpMoEConfig, layer_idx: int):
+        super().__init__()
+        self.hidden_size = config.hidden_size
+        self.attention_type = config.layer_types[layer_idx]
+        self.attn_impl = config.layer_attn_impls[layer_idx]
+        if self.attn_impl not in _ATTN_IMPLS:
+            raise ValueError(f"Unsupported attention implementation: {self.attn_impl}")
+
+        if self.attn_impl == "kda":
+            self.self_attn = KimiDeltaAttention(
+                layer_idx=layer_idx,
+                hidden_size=config.hidden_size,
+                head_dim=config.head_dim,
+                num_heads=config.num_attention_heads,
+                num_v_heads=config.kda_num_v_heads,
+                mode=config.kda_mode,
+                use_short_conv=config.kda_use_short_conv,
+                conv_size=config.kda_conv_size,
+                conv_bias=config.kda_conv_bias,
+                allow_neg_eigval=config.kda_allow_neg_eigval,
+                expand_v=config.kda_expand_v,
+                norm_eps=config.rms_norm_eps,
+            )
+        else:
+            self.self_attn = VpMoETPAAttention(config=config, layer_idx=layer_idx)
+
+        self.mlp = VpMoEMLP(config)
+        self.input_layernorm = VpMoERMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = VpMoERMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+
+    @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
+        **kwargs: Unpack[TransformersKwargs],
+    ) -> torch.Tensor:
+        residual = hidden_states
+        hidden_states = self.input_layernorm(hidden_states)
+
+        if self.attn_impl == "kda":
+            hidden_states, _, _ = self.self_attn(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                **kwargs,
+            )
+        else:
+            hidden_states, _ = self.self_attn(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                **kwargs,
+            )
+
+        hidden_states = residual + hidden_states
+
+        residual = hidden_states
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states, _ = self.mlp(hidden_states)
+        hidden_states = residual + hidden_states
+        return hidden_states
+
+
+@auto_docstring
+class VpMoEPreTrainedModel(PreTrainedModel):
+    config_class = VpMoEConfig
+    base_model_prefix = "model"
+    supports_gradient_checkpointing = True
+    _no_split_modules = ["VpMoEDecoderLayer"]
+    _skip_keys_device_placement = ["past_key_values"]
+    _supports_flash_attn = True
+    _supports_sdpa = False
+    _supports_flex_attn = True
+    _can_compile_fullgraph = True
+    _supports_attention_backend = True
+    _supports_cache_class = True
+
+    _can_record_outputs = {
+        "router_logits": OutputRecorder(VpMoETopKRouter, index=0),
+        "hidden_states": VpMoEDecoderLayer,
+        "attentions": [VpMoETPAAttention, KimiDeltaAttention],
+    }
+    _keep_in_fp32_modules = ["post_attention_layernorm", "input_layernorm", "norm"]
+    _supports_flash_attention = False
+    _supports_flex_attention = False
+
+    def _init_weights(self, module):
+        std = self.config.initializer_range
+        if isinstance(module, VpMoETPAAttention):
+            in_features = module.W_A_q.in_features
+            W_A_q = module.W_A_q.weight.view(in_features, module.num_heads, module.q_rank)
+            W_A_k = module.W_A_k.weight.view(in_features, module.num_key_value_heads, module.rank)
+            W_A_v = module.W_A_v.weight.view(in_features, module.num_key_value_heads, module.rank)
+            nn.init.xavier_uniform_(W_A_q)
+            nn.init.xavier_uniform_(W_A_k)
+            nn.init.xavier_uniform_(W_A_v)
+            module.W_A_q.weight.data.copy_(W_A_q.view_as(module.W_A_q.weight))
+            module.W_A_k.weight.data.copy_(W_A_k.view_as(module.W_A_k.weight))
+            module.W_A_v.weight.data.copy_(W_A_v.view_as(module.W_A_v.weight))
+
+            W_B_q = module.W_B_q.weight.view(in_features, module.q_rank, module.head_dim)
+            W_B_k = module.W_B_k.weight.view(in_features, module.rank, module.head_dim)
+            W_B_v = module.W_B_v.weight.view(in_features, module.rank, module.head_dim)
+            nn.init.xavier_uniform_(W_B_q)
+            nn.init.xavier_uniform_(W_B_k)
+            nn.init.xavier_uniform_(W_B_v)
+            module.W_B_q.weight.data.copy_(W_B_q.view_as(module.W_B_q.weight))
+            module.W_B_k.weight.data.copy_(W_B_k.view_as(module.W_B_k.weight))
+            module.W_B_v.weight.data.copy_(W_B_v.view_as(module.W_B_v.weight))
+
+            module.sinks.data.normal_(mean=0.0, std=std)
+            if module.o_proj.weight is not None:
+                module.o_proj.weight.data.normal_(mean=0.0, std=std)
+            if module.o_proj.bias is not None:
+                module.o_proj.bias.data.zero_()
+        elif isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Parameter):
+            module.data.normal_(mean=0.0, std=std)
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, VpMoERMSNorm):
+            module.weight.data.fill_(1.0)
+        elif isinstance(module, VpMoEExperts):
+            module.gate_up_proj.data.normal_(mean=0.0, std=std)
+            module.gate_up_proj_bias.data.zero_()
+            module.down_proj.data.normal_(mean=0.0, std=std)
+            module.down_proj_bias.data.zero_()
+        elif isinstance(module, VpMoETopKRouter):
+            module.weight.data.normal_(mean=0.0, std=std)
+            module.bias.data.normal_(mean=0.0, std=std)
+
+
+@auto_docstring
+class VpMoEModel(VpMoEPreTrainedModel):
+    _no_split_modules = ["VpMoEDecoderLayer"]
+
+    def __init__(self, config: VpMoEConfig):
+        super().__init__(config)
+        self.padding_idx = config.pad_token_id
+        self.vocab_size = config.vocab_size
+
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.layers = nn.ModuleList([VpMoEDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
+        self.norm = VpMoERMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.rotary_emb = VpMoERotaryEmbedding(config=config)
+        self.gradient_checkpointing = False
+
+        self.post_init()
+
+    @check_model_inputs
+    @auto_docstring
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs: Unpack[TransformersKwargs],
+    ) -> MoeModelOutputWithPast:
+        if (input_ids is None) ^ (inputs_embeds is not None):
+            raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+
+        if use_cache and past_key_values is None:
+            past_key_values = Cache()
+        if use_cache and not isinstance(past_key_values, Cache):
+            past_key_values = Cache.from_legacy_cache(past_key_values)
+
+        if inputs_embeds is None:
+            inputs_embeds = self.embed_tokens(input_ids)
+
+        if cache_position is None:
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+            cache_position = torch.arange(
+                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+            )
+        if position_ids is None:
+            position_ids = cache_position.unsqueeze(0)
+
+        padding_mask = None
+        if not isinstance(attention_mask, dict):
+            padding_mask = attention_mask
+            mask_kwargs = {
+                "config": self.config,
+                "input_embeds": inputs_embeds,
+                "attention_mask": attention_mask,
+                "cache_position": cache_position,
+                "past_key_values": past_key_values,
+            }
+            causal_mask_mapping = {
+                "full_attention": create_causal_mask(**mask_kwargs),
+                "sliding_attention": create_sliding_window_causal_mask(**mask_kwargs),
+            }
+        else:
+            causal_mask_mapping = attention_mask
+
+        hidden_states = inputs_embeds
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+
+        for decoder_layer in self.layers:
+            layer_mask = (
+                causal_mask_mapping[decoder_layer.attention_type]
+                if decoder_layer.attn_impl == "tpa"
+                else padding_mask
+            )
+            hidden_states = decoder_layer(
+                hidden_states,
+                attention_mask=layer_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                **kwargs,
+            )
+
+        hidden_states = self.norm(hidden_states)
+        return MoeModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=past_key_values,
+        )
+
+
+def load_balancing_loss_func(
+    gate_logits: Union[torch.Tensor, tuple[torch.Tensor], None],
+    num_experts: Optional[int] = None,
+    top_k: int = 2,
+    attention_mask: Optional[torch.Tensor] = None,
+) -> Union[torch.Tensor, int]:
+    if gate_logits is None or not isinstance(gate_logits, tuple):
+        return 0
+
+    if isinstance(gate_logits, tuple):
+        compute_device = gate_logits[0].device
+        concatenated_gate_logits = torch.cat([layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0)
+
+    routing_weights = torch.nn.functional.softmax(concatenated_gate_logits, dim=-1)
+    _, selected_experts = torch.topk(routing_weights, top_k, dim=-1)
+    expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
+
+    if attention_mask is None:
+        tokens_per_expert = torch.mean(expert_mask.float(), dim=0)
+        router_prob_per_expert = torch.mean(routing_weights, dim=0)
+    else:
+        batch_size, sequence_length = attention_mask.shape
+        num_hidden_layers = concatenated_gate_logits.shape[0] // (batch_size * sequence_length)
+
+        expert_attention_mask = (
+            attention_mask[None, :, :, None, None]
+            .expand((num_hidden_layers, batch_size, sequence_length, top_k, num_experts))
+            .reshape(-1, top_k, num_experts)
+            .to(compute_device)
+        )
+
+        tokens_per_expert = torch.sum(expert_mask.float() * expert_attention_mask, dim=0) / torch.sum(
+            expert_attention_mask, dim=0
+        )
+
+        router_per_expert_attention_mask = (
+            attention_mask[None, :, :, None]
+            .expand((num_hidden_layers, batch_size, sequence_length, num_experts))
+            .reshape(-1, num_experts)
+            .to(compute_device)
+        )
+
+        router_prob_per_expert = torch.sum(routing_weights * router_per_expert_attention_mask, dim=0) / torch.sum(
+            router_per_expert_attention_mask, dim=0
+        )
+
+    overall_loss = torch.sum(tokens_per_expert * router_prob_per_expert.unsqueeze(0))
+    return overall_loss * num_experts
+
+
+@auto_docstring
+class VpMoEForCausalLM(VpMoEPreTrainedModel, GenerationMixin):
+    _tied_weights_keys = ["lm_head.weight"]
+    _tp_plan = {"lm_head": "colwise_rep"}
+    _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
+
+    def __init__(self, config: VpMoEConfig):
+        super().__init__(config)
+        self.model = VpMoEModel(config)
+        self.vocab_size = config.vocab_size
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.router_aux_loss_coef = config.router_aux_loss_coef
+        self.num_experts = config.num_local_experts
+        self.num_experts_per_tok = config.num_experts_per_tok
+
+        self.post_init()
+
+    @can_return_tuple
+    @auto_docstring
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_router_logits: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
+        **kwargs: Unpack[TransformersKwargs],
+    ) -> MoeCausalLMOutputWithPast:
+        output_router_logits = (
+            output_router_logits if output_router_logits is not None else self.config.output_router_logits
+        )
+
+        outputs: MoeModelOutputWithPast = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_router_logits=output_router_logits,
+            cache_position=cache_position,
+            **kwargs,
+        )
+
+        hidden_states = outputs.last_hidden_state
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
+
+        loss = None
+        if labels is not None:
+            loss = self.loss_function(logits, labels, self.vocab_size, **kwargs)
+
+        aux_loss = None
+        if output_router_logits:
+            aux_loss = load_balancing_loss_func(
+                outputs.router_logits,
+                self.num_experts,
+                self.num_experts_per_tok,
+                attention_mask,
+            )
+            if labels is not None:
+                loss += self.router_aux_loss_coef * aux_loss.to(loss.device)
+
+        return MoeCausalLMOutputWithPast(
+            loss=loss,
+            aux_loss=aux_loss,
+            logits=logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            router_logits=outputs.router_logits,
+        )
+
+
+class VpMoEForSequenceClassification(GenericForSequenceClassification, VpMoEPreTrainedModel):
+    pass
+
+
+class VpMoEForTokenClassification(GenericForTokenClassification, VpMoEPreTrainedModel):
+    pass
+
+
+__all__ = [
+    "VpMoEForCausalLM",
+    "VpMoEForSequenceClassification",
+    "VpMoEForTokenClassification",
+    "VpMoEModel",
+    "VpMoEPreTrainedModel",
+]

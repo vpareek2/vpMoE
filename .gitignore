@@ -27,3 +27,5 @@ weights/
 # If introduced later, keep non-weight run outputs local only.
 artifacts/
 *.nsys-rep
+
+/src/third_party/
