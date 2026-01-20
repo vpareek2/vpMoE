@@ -99,10 +99,14 @@ This is the “what changes” list when copying GPT‑OSS as the starting point
 
 ## 7) Initialization + BF16-only checkpointing
 
-- [ ] Produce one canonical **MXFP4/FP4 → BF16 export** of GPT‑OSS‑20B MoE weights and treat it as the init source.
+- [x] Produce one canonical **MXFP4/FP4 → BF16 export** of GPT‑OSS‑20B MoE weights and treat it as the init source.
   - Script: `scripts/export_gpt_oss_mxfp4_to_bf16.py` (writes `bf16_export_manifest.json` and runs validation).
 - [ ] Define export artifact rules (format, location, provenance: hashes, tokenizer id/version, config hash) — tracked in `src/open_questions.md`.
-- [ ] Initialization rules (student):
+- [x] Build the student init checkpoint from the BF16 export.
+  - Script: `scripts/init_vpmoe_from_gpt_oss.py --teacher /data/gpt-oss-20b-bf16 --output-dir weights/vpmoe-20b-init`
+  - Copies embeddings, norms, router/expert weights, plus `o_proj` + sinks on TPA layers.
+  - Leaves TPA factor projections and all KDA params at their initial Xavier/random init.
+- [x] Initialization rules (student):
   - TPA factor projections: Xavier init.
   - Copy attention-side interface params from init source: `o_proj` + sink params (TPA layers).
   - Do not attempt 1:1 transplant of GPT‑OSS q/k/v projections into full contextual TPA (not equivalent).
@@ -112,7 +116,8 @@ This is the “what changes” list when copying GPT‑OSS as the starting point
 - [ ] Stage 1 (short ctx): `seq_len=4096`, Phase‑1 dataset (~665M tokens), Arcee-style freezing (attention stack only).
   - Optimizer note: HF does not expose `torch.optim.Muon` via `optim=...` in our pinned Transformers, so DistillKit in this repo
     supports opting into Muon via `training_args.optim_args: "muon"` (optionally with `momentum/nesterov/ns_steps/eps`), while keeping
-    `training_args.optim` set to any valid HF optimizer name (e.g. `adamw_torch`).
+    `training_args.optim` set to any valid HF optimizer name (e.g. `adamw_torch`). Muon is applied to **2D parameters only** (as torch enforces);
+    all non‑2D trainable params (biases, norm weights, sink logits, etc.) use AdamW.
 - [ ] Stage 2 (long ctx): target `seq_len=32768` (32k), unfreeze experts, keep router frozen; revisit router only if diagnostics demand.
 
 ## 9) Diagnostics + evaluation (gates)

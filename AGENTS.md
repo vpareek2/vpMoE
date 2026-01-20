@@ -21,7 +21,7 @@ If you change a workflow or contract, update the relevant doc(s) in the same pat
 
 ## Current Locked Decisions (baseline)
 
-- **Teacher:** GPT‑OSS (primary teacher is 120B; 20B may be used for fast iteration/probing)
+- **Teacher:** GPT‑OSS‑20B only
 - **Tokenizer / format:** o200k Harmony (`openai_harmony` / `HARMONY_GPT_OSS`, padded vocab size **201088**)
 - **Distillation mode (this phase):** teacher-forced forward-pass distillation (no online rollouts/generation inside the training loop)
 - **Loss masking:** prompt/system/user tokens must be masked from loss; assistant tokens are the only supervised region

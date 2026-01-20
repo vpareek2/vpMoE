@@ -59,7 +59,7 @@ It’s built on HF Transformers/TRL/Accelerate. ([GitHub][3])
 **Recommendation**
 
 * Start with **online using gpt‑oss‑20b** (fast iteration).
-* Switch to **offline** for **gpt‑oss‑120b** (unless you have enough VRAM and want online). DistillKit’s compression exists specifically to make offline feasible. ([GitHub][3])
+* Use **gpt‑oss‑20b** for both online and offline workflows (choose offline only if teacher throughput becomes the bottleneck). DistillKit’s compression exists specifically to make offline feasible. ([GitHub][3])
 
 ---
 
@@ -217,9 +217,9 @@ DistillKit supports:
 * fast debugging
 * lets you validate loss masks + architecture quickly
 
-**Step 2 (quality): offline or online with gpt‑oss‑120b**
+**Step 2 (quality): scale with gpt‑oss‑20b (online or offline)**
 
-* If VRAM is tight: capture logits once → reuse many times (this is what DistillKit’s compression system is for). ([GitHub][3])
+* If VRAM/throughput is tight: capture logits once → reuse many times (this is what DistillKit’s compression system is for). ([GitHub][3])
 
 ### 4.2 Decide: what distribution to store (if offline)
 
@@ -460,8 +460,7 @@ Mitigation:
 
 ## Nice-to-have
 
-* [ ] Offline teacher logits for 120b using DistillKit compression
-* [ ] Multi-teacher schedule: 20b online → 120b offline polish
+* [ ] Optional: capture **gpt‑oss‑20b** teacher logits offline using DistillKit compression
 * [ ] Early long-context exposure to prevent KDA “cold start” later
 
 ---
@@ -476,6 +475,6 @@ If you want, I can also draft **three concrete DistillKit YAMLs** (Stage A/B/C) 
 …and I’ll keep them consistent with what Arcee shows in their KDA distillation example config. ([Arcee AI][4])
 
 [1]: https://huggingface.co/openai/gpt-oss-20b/blob/main/config.json "config.json · openai/gpt-oss-20b at main"
-[2]: https://github.com/openai/gpt-oss?utm_source=chatgpt.com "openai/gpt-oss: gpt-oss-120b and gpt-oss-20b are two ..."
+[2]: https://github.com/openai/gpt-oss?utm_source=chatgpt.com "openai/gpt-oss repository"
 [3]: https://github.com/arcee-ai/DistillKit "GitHub - arcee-ai/DistillKit: An Open Source Toolkit For LLM Distillation"
 [4]: https://www.arcee.ai/blog/distilling-kimi-delta-attention-into-afm-4-5b-and-the-tool-we-used-to-do-it "Arcee AI | Distilling Kimi Delta Attention into AFM-4.5B"

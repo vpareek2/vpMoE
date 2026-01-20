@@ -3,17 +3,9 @@ Yep — and one key clarification up front:
 * **Prompt length** is determined by your dataset + `ctx_bucket`.
 * **Reasoning level (low/med/high)** mostly changes the **teacher output length** (CoT+answer), which is what will swing your token budget.
 
-## 1) What are the **average CoT+Answer lengths** for low/med/high (20B vs 120B)?
+## 1) What are the **average CoT+Answer lengths** for low/med/high (gpt‑oss‑20b)?
 
-OpenAI’s model card plots **accuracy vs average “CoT + Answer length”** for both models and all three reasoning modes. From Figure 3 (AIME 2025 + GPQA Diamond), the rough averages are:
-
-### gpt-oss-120b (teacher output: CoT+Answer)
-
-* **Low:** ~**1k** tokens
-* **Medium:** ~**4–5k** tokens
-* **High:** ~**14–16k** tokens
-
-### gpt-oss-20b (teacher output: CoT+Answer)
+OpenAI’s model card plots **accuracy vs average “CoT + Answer length”** across reasoning modes. From Figure 3 (AIME 2025 + GPQA Diamond), the rough averages for **gpt‑oss‑20b** are:
 
 * **Low:** ~**1k** tokens
 * **Medium:** ~**6–8k** tokens
@@ -21,7 +13,7 @@ OpenAI’s model card plots **accuracy vs average “CoT + Answer length”** fo
 
 The model card also explicitly notes that **gpt-oss-20b uses over 20k CoT tokens per AIME problem on average** (i.e., high reasoning can get *very* long).
 
-**Takeaway for budgeting:** at **high reasoning**, the 20B teacher can easily emit **~2×** the output tokens of 120B (depending on task).
+**Takeaway for budgeting:** at **high reasoning**, the 20B teacher can emit *very* long outputs, so cap or curriculum “high” carefully.
 
 ---
 
@@ -61,7 +53,7 @@ For each cell in your grid **(bucket b, ctx c)**:
    ]
 
 * (p_{b,c}(m)) is your curriculum mix of reasoning modes in that cell.
-* (\mathbb{E}[t_{\text{out}}]) differs between **20B vs 120B** and low/med/high (numbers above).
+* (\mathbb{E}[t_{\text{out}}]) differs across low/med/high reasoning (numbers above).
 
 3. **Number of prompts needed**:
    [
@@ -79,7 +71,7 @@ In your doc you wrote “most tokens short/medium,” so those percentages shoul
 To make the reverse-engineering accurate, don’t guess — **measure** on your own prompt pools:
 
 * Sample ~**1k prompts** per bucket (B1–B5), stratified by ctx bucket.
-* For each teacher (**20B** and **120B**) and reasoning mode (L/M/H), run with your intended `max_new_tokens` per ctx bucket.
+* For **gpt‑oss‑20b** and each reasoning mode (L/M/H), run with your intended `max_new_tokens` per ctx bucket.
 * Record:
 
   * `prompt_tokens`

@@ -28,6 +28,9 @@ RUN if [[ ! -d src/third_party/transformers ]]; then \
     python3 -m pip uninstall -y transformers || true && \
     python3 -m pip install --no-cache-dir -e src/third_party/transformers
 
+# Install the local DistillKit checkout (no deps; requirements.txt covers them).
+RUN python3 -m pip install --no-cache-dir --no-deps -e src/DistillKit
+
 ENV PYTHONPATH=/workspace/vpmoe:/workspace/vpmoe/vpmoe/Megatron-vpmoe
 
 CMD ["/bin/bash"]

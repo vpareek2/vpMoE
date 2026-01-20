@@ -146,4 +146,26 @@ python3 "${REPO_ROOT}/scripts/merge_distill_datasets.py" \
 python3 "${REPO_ROOT}/scripts/count_distill_tokens.py" --input-dir "${MERGE_OUT_DIR}" --split all
 python3 "${REPO_ROOT}/scripts/print_distill_samples.py" --input-dir "${MERGE_OUT_DIR}" --split train --num-samples 3 --seed 0 --raw
 
+echo "Converting merged parquet dataset to HF save_to_disk format..." >&2
+MERGE_TMP_DIR="${MERGE_OUT_DIR}_tmp"
+rm -rf "${MERGE_TMP_DIR}"
+python3 - <<PY
+from datasets import load_dataset
+from pathlib import Path
+
+src = Path("${MERGE_OUT_DIR}")
+out = Path("${MERGE_TMP_DIR}")
+data_files = {
+    "train": str(src / "train" / "*.parquet"),
+    "validation": str(src / "validation" / "*.parquet"),
+}
+ds = load_dataset("parquet", data_files=data_files)
+ds.save_to_disk(str(out))
+print(f"Saved HF dataset to {out}")
+PY
+
+echo "Replacing parquet output with save_to_disk dataset..." >&2
+rm -rf "${MERGE_OUT_DIR}"
+mv "${MERGE_TMP_DIR}" "${MERGE_OUT_DIR}"
+
 echo "Phase 1 (4k) dataset build complete." >&2

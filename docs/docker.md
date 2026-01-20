@@ -21,6 +21,9 @@ git checkout v4.57.6
 docker compose -f docker/compose.yml build vpmoe
 ```
 
+The container also installs the local DistillKit checkout at `src/DistillKit`
+so the `distillkit` CLI is available inside the image.
+
 Override base image (optional):
 
 ```bash

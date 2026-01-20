@@ -216,7 +216,7 @@ def main() -> int:
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
+        default=["openai/gpt-oss-20b"],
     )
     parser.add_argument(
         "--backend",

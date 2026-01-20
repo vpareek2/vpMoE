@@ -44,7 +44,7 @@ Run inside the container:
 
 ```bash
 python3 scripts/teacher_probe.py \
-  --models openai/gpt-oss-20b openai/gpt-oss-120b \
+  --models openai/gpt-oss-20b \
   --prompts src/data/prompts.jsonl \
   --out /data/teacher_runs.jsonl
 ```

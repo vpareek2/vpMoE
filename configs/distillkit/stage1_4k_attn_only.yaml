@@ -1,0 +1,65 @@
+project_name: vpmoe-stage1-4k-attn-only
+trust_remote_code: true
+model: /workspace/vpmoe/weights/vpmoe-20b-init
+output_path: /data/distill_runs/vpmoe_stage1_4k_attn_only
+use_flash_attention: true
+sequence_length: 4096
+
+dataset:
+  train_dataset:
+    disk_path: /data/distillation_1/phase1_mix_4k_665m
+    split: train
+  eval_dataset:
+    disk_path: /data/distillation_1/phase1_mix_4k_665m
+    split: validation
+  seed: 12
+
+loss_functions:
+  - function: cross_entropy
+    weight: 0.2
+  - function: kl
+    weight: 0.2
+    temperature: 2.0
+  - function: hs_cosine
+    weight: 0.6
+
+layer_mapping: all
+
+teacher:
+  kind: hf
+  path: /data/gpt-oss-20b-bf16
+  kwargs:
+    attn_implementation: flash_attention_2
+    torch_dtype: bfloat16
+    device_map: cuda:0
+
+training_args:
+  dataset_kwargs:
+    skip_prepare_dataset: true
+  packing: false
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  save_steps: 200
+  save_total_limit: 2
+  logging_steps: 1
+  learning_rate: 1.0e-5
+  weight_decay: 0.05
+  warmup_ratio: 0.025
+  lr_scheduler_type: cosine
+  bf16: true
+  max_grad_norm: 0.5
+  optim: adamw_torch
+  optim_args: "muon"
+  gradient_checkpointing: true
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
+  report_to: none
+
+frozen_res:
+  - ^model\.embed_tokens
+  - ^lm_head
+  - ^model\.norm
+  - ^model\.layers\.\d+\.input_layernorm
+  - ^model\.layers\.\d+\.post_attention_layernorm
+  - ^model\.layers\.\d+\.mlp

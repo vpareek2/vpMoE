@@ -285,10 +285,17 @@ def load_tokenizer(config: DistillationRunConfig) -> transformers.PreTrainedToke
     else:
         src_path = config.train_model
         logging.info("Using student's tokenizer")
-    return transformers.AutoTokenizer.from_pretrained(
-        src_path,
-        trust_remote_code=config.trust_remote_code,
-    )
+    try:
+        return transformers.AutoTokenizer.from_pretrained(
+            src_path,
+            trust_remote_code=config.trust_remote_code,
+            fix_mistral_regex=True,
+        )
+    except TypeError:
+        return transformers.AutoTokenizer.from_pretrained(
+            src_path,
+            trust_remote_code=config.trust_remote_code,
+        )
 
 
 def do_distill(config: DistillationRunConfig, config_source: str | None = None):

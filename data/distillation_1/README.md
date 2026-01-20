@@ -6,7 +6,7 @@ Outputs are written to `/data/distillation_1/...` inside the container.
 
 ## Canonical Phase‑1 training dataset (what to train on)
 
-The canonical, interleaved Phase‑1 dataset directory is:
+The canonical, interleaved Phase‑1 dataset directory is **a Hugging Face `save_to_disk` dataset** at:
 
 - `/data/distillation_1/phase1_mix_4k_665m`
 
@@ -20,7 +20,7 @@ Legacy note: `/data/distillation_1/phase1_mix_8k_665m` (and related 8k outputs) 
 short‑context target anymore.
 
 ## What was built
-- Output format: DistillKit-ready parquet shards (`train/`, `validation/`), with:
+- Output format: Hugging Face `save_to_disk` dataset (Arrow) containing:
   - `input_ids` (Harmony tokens)
   - `labels` masked to assistant tokens (`-100` elsewhere)
   - `spans.assistant_token_start` + per-example assistant span lengths
@@ -143,29 +143,14 @@ PYARROW_NUM_THREADS=20 OMP_NUM_THREADS=20 python3 scripts/build_oasst2_distill.p
 Note:
 - The dataset is finite; `--target-total-tokens` is a cap, not a guarantee. The builder will stop early if it exhausts the source.
 
-## Optional: single interleaved Phase‑1 dataset directory
+## Interleaved Phase‑1 dataset directory (canonical)
 
-If you want training to consume a single directory (instead of 4 roots), you must **rewrite**
-the datasets into a canonical schema because the per-dataset `source` struct fields differ.
+We merge into a single canonical schema and then **convert to `save_to_disk`** so any DistillKit implementation
+can load it via `datasets.load_from_disk`.
 
-This is what `scripts/merge_distill_datasets.py` does: it reads each dataset’s shards and
-writes a new dataset with a canonical `source` struct (and a `meta_json` field to preserve provenance).
-
-Example command:
-```
-PYARROW_NUM_THREADS=20 OMP_NUM_THREADS=20 python3 scripts/merge_distill_datasets.py \
-  --input synth=/data/distillation_1/synth_distill_phase1_high_550m_4k \
-  --input code=/data/distillation_1/code_opencodeinstruct_55m_4k \
-  --input math=/data/distillation_1/math_nemotron_v2_low_55m_4k \
-  --input chat=/data/distillation_1/helpfulness_oasst2_15m_4k \
-  --output-dir /data/distillation_1/phase1_mix_4k_665m \
-  --weight-by assistant_tokens \
-  --seed 1337
-```
-
-Helper script (same as above + stats + samples):
+The helper script does all steps (build + merge + convert):
 ```
 scripts/run_phase1_build_4k_665m.sh
 ```
 
-After that, you can point training at `/data/distillation_1/phase1_mix_4k_665m` and ignore the individual roots.
+After that, point training at `/data/distillation_1/phase1_mix_4k_665m` and ignore the individual roots.
