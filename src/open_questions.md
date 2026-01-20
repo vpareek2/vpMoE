@@ -71,8 +71,8 @@ Decisions already made live in `src/architecture.md`.
 - [x] **BF16 init source:** we will produce a canonical **BF16 export** by dequantizing the MXFP4/FP4 MoE weights to BF16 and resaving a pure-BF16 checkpoint.
   - Rationale: dequantization does not introduce new distortion beyond the existing quantization error; it makes that fixed error explicit in BF16 form.
   - This BF16 export becomes the **only** supported initialization source for the student.
-- [ ] **BF16 export artifact:** define the one-time “MXFP4 → BF16 export” artifact format, location, and provenance rules (hashing, config, tokenizer id).
-- [ ] **Verification:** how do we assert the student checkpoint contains *no* MXFP4 blocks/scales (and no quantizer config)?
+- [x] **BF16 export artifact:** scripted via `scripts/export_gpt_oss_mxfp4_to_bf16.py` (writes `bf16_export_manifest.json` with hashes for config/index/tokenizer).
+- [x] **Verification:** `vpmoe.mxfp4_export.validate_bf16_checkpoint` + `tests/test_mxfp4_export.py` assert no blocks/scales or quantization_config.
 
 ## Layer specification surface (minimal config)
 

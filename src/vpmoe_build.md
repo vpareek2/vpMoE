@@ -100,6 +100,7 @@ This is the “what changes” list when copying GPT‑OSS as the starting point
 ## 7) Initialization + BF16-only checkpointing
 
 - [ ] Produce one canonical **MXFP4/FP4 → BF16 export** of GPT‑OSS‑20B MoE weights and treat it as the init source.
+  - Script: `scripts/export_gpt_oss_mxfp4_to_bf16.py` (writes `bf16_export_manifest.json` and runs validation).
 - [ ] Define export artifact rules (format, location, provenance: hashes, tokenizer id/version, config hash) — tracked in `src/open_questions.md`.
 - [ ] Initialization rules (student):
   - TPA factor projections: Xavier init.
@@ -109,6 +110,9 @@ This is the “what changes” list when copying GPT‑OSS as the starting point
 ## 8) Distillation schedule (what we run first)
 
 - [ ] Stage 1 (short ctx): `seq_len=4096`, Phase‑1 dataset (~665M tokens), Arcee-style freezing (attention stack only).
+  - Optimizer note: HF does not expose `torch.optim.Muon` via `optim=...` in our pinned Transformers, so DistillKit in this repo
+    supports opting into Muon via `training_args.optim_args: "muon"` (optionally with `momentum/nesterov/ns_steps/eps`), while keeping
+    `training_args.optim` set to any valid HF optimizer name (e.g. `adamw_torch`).
 - [ ] Stage 2 (long ctx): target `seq_len=32768` (32k), unfreeze experts, keep router frozen; revisit router only if diagnostics demand.
 
 ## 9) Diagnostics + evaluation (gates)
@@ -123,4 +127,3 @@ This is the “what changes” list when copying GPT‑OSS as the starting point
 - [ ] **Sliding-window exact semantics** (training + `generate`): confirm vs GPT‑OSS and then lock with tests.
 - [ ] **Router policy** (distill vs free + aux losses): defer until the router is actually unfrozen / intervention is required.
 - [ ] **MTP**: post-training only; not part of distillation v1.
-

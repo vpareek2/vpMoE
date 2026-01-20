@@ -25,7 +25,11 @@ from torch.nn import functional as F
 from transformers.generation import GenerationMixin
 from transformers.integrations.hub_kernels import use_kernel_forward_from_hub
 from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
-from transformers.modeling_layers import GenericForSequenceClassification, GenericForTokenClassification
+from transformers.modeling_layers import (
+    GenericForSequenceClassification,
+    GenericForTokenClassification,
+    GradientCheckpointingLayer,
+)
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
@@ -232,15 +236,19 @@ def tpa_eager_attention_forward(
         causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
         attn_logits = attn_logits + causal_mask
 
-    attn_weights = torch.softmax(attn_logits, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
-    attn_output = torch.matmul(attn_weights, value_states)
-
     if s_aux is not None:
         log_z = torch.logsumexp(attn_logits.float(), dim=-1)
         sinks = s_aux.view(1, -1, 1).to(log_z.dtype)
         gate = torch.sigmoid(log_z - sinks)
-        attn_output = attn_output * gate.to(attn_output.dtype).unsqueeze(-1)
+    else:
+        gate = None
+
+    attn_weights = torch.softmax(attn_logits, dim=-1, dtype=torch.float32)
+    if gate is not None:
+        attn_weights = attn_weights * gate.unsqueeze(-1)
+    attn_weights = attn_weights.to(query.dtype)
+    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+    attn_output = torch.matmul(attn_weights, value_states)
 
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
@@ -349,7 +357,7 @@ class VpMoETPAAttention(nn.Module):
         return attn_output, attn_weights
 
 
-class VpMoEDecoderLayer(nn.Module):
+class VpMoEDecoderLayer(GradientCheckpointingLayer):
     def __init__(self, config: VpMoEConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -450,26 +458,12 @@ class VpMoEPreTrainedModel(PreTrainedModel):
     def _init_weights(self, module):
         std = self.config.initializer_range
         if isinstance(module, VpMoETPAAttention):
-            in_features = module.W_A_q.in_features
-            W_A_q = module.W_A_q.weight.view(in_features, module.num_heads, module.q_rank)
-            W_A_k = module.W_A_k.weight.view(in_features, module.num_key_value_heads, module.rank)
-            W_A_v = module.W_A_v.weight.view(in_features, module.num_key_value_heads, module.rank)
-            nn.init.xavier_uniform_(W_A_q)
-            nn.init.xavier_uniform_(W_A_k)
-            nn.init.xavier_uniform_(W_A_v)
-            module.W_A_q.weight.data.copy_(W_A_q.view_as(module.W_A_q.weight))
-            module.W_A_k.weight.data.copy_(W_A_k.view_as(module.W_A_k.weight))
-            module.W_A_v.weight.data.copy_(W_A_v.view_as(module.W_A_v.weight))
-
-            W_B_q = module.W_B_q.weight.view(in_features, module.q_rank, module.head_dim)
-            W_B_k = module.W_B_k.weight.view(in_features, module.rank, module.head_dim)
-            W_B_v = module.W_B_v.weight.view(in_features, module.rank, module.head_dim)
-            nn.init.xavier_uniform_(W_B_q)
-            nn.init.xavier_uniform_(W_B_k)
-            nn.init.xavier_uniform_(W_B_v)
-            module.W_B_q.weight.data.copy_(W_B_q.view_as(module.W_B_q.weight))
-            module.W_B_k.weight.data.copy_(W_B_k.view_as(module.W_B_k.weight))
-            module.W_B_v.weight.data.copy_(W_B_v.view_as(module.W_B_v.weight))
+            nn.init.xavier_uniform_(module.W_A_q.weight)
+            nn.init.xavier_uniform_(module.W_A_k.weight)
+            nn.init.xavier_uniform_(module.W_A_v.weight)
+            nn.init.xavier_uniform_(module.W_B_q.weight)
+            nn.init.xavier_uniform_(module.W_B_k.weight)
+            nn.init.xavier_uniform_(module.W_B_v.weight)
 
             module.sinks.data.normal_(mean=0.0, std=std)
             if module.o_proj.weight is not None:

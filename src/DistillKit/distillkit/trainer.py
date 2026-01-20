@@ -1,6 +1,7 @@
 # Copyright 2024 Charles O. Goddard
 
 import torch
+from transformers.trainer_pt_utils import get_parameter_names
 from transformers import (
     PreTrainedModel,
 )
@@ -61,6 +62,112 @@ class DistillationTrainer(SFTTrainer):
             )
 
         self.model_accepts_loss_kwargs = False
+
+    @staticmethod
+    def _parse_muon_optim_args(value: str | None) -> dict:
+        """
+        Parse TrainingArguments.optim_args when using Muon.
+
+        HF does not expose torch.optim.Muon via TrainingArguments.optim, so we
+        opt into Muon by setting:
+          optim_args: "muon" (defaults)
+          optim_args: "muon,momentum=0.95,nesterov=true,ns_steps=5,eps=1e-7"
+        """
+
+        if not value:
+            return {}
+        raw = value.strip()
+        if not raw:
+            return {}
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if not parts or parts[0].lower() != "muon":
+            return {}
+
+        out: dict = {}
+        for part in parts[1:]:
+            if "=" not in part:
+                raise ValueError(f"Invalid optim_args token '{part}'. Expected key=value.")
+            key, val = part.split("=", 1)
+            key = key.strip()
+            val = val.strip()
+            if not key:
+                raise ValueError(f"Invalid optim_args token '{part}'. Empty key.")
+
+            if key in {"momentum", "eps"}:
+                out[key] = float(val)
+            elif key in {"ns_steps"}:
+                out[key] = int(val)
+            elif key in {"nesterov"}:
+                vv = val.lower()
+                if vv in {"true", "1", "yes", "y"}:
+                    out[key] = True
+                elif vv in {"false", "0", "no", "n"}:
+                    out[key] = False
+                else:
+                    raise ValueError(f"Invalid boolean for {key} in optim_args: '{val}'.")
+            else:
+                raise ValueError(
+                    f"Unsupported Muon optim_args key '{key}'. "
+                    "Supported keys: momentum, nesterov, ns_steps, eps."
+                )
+        return out
+
+    def create_optimizer(self):
+        if self.optimizer is not None:
+            return self.optimizer
+
+        muon_kwargs = self._parse_muon_optim_args(getattr(self.args, "optim_args", None))
+        if not muon_kwargs:
+            return super().create_optimizer()
+
+        # No-decay policy: biases + norm weights.
+        # Note: transformers.ALL_LAYERNORM_LAYERS does not include RMSNorm in 4.57.6,
+        # so we also exclude any parameter names containing ".norm." / ending in "norm.weight".
+        decay_param_names = set(
+            n
+            for n in get_parameter_names(self.model, [torch.nn.LayerNorm])
+            if not n.endswith(".bias")
+        )
+
+        weight_decay = float(getattr(self.args, "weight_decay", 0.0))
+        lr = float(getattr(self.args, "learning_rate", 1e-3))
+
+        optimizer_grouped_parameters = [
+            {
+                "params": [
+                    p
+                    for n, p in self.model.named_parameters()
+                    if p.requires_grad
+                    and (n not in decay_param_names)
+                    and (not n.endswith(".bias"))
+                    and (".norm." not in n)
+                    and (not n.endswith("norm.weight"))
+                ],
+                "weight_decay": weight_decay,
+            },
+            {
+                "params": [
+                    p
+                    for n, p in self.model.named_parameters()
+                    if p.requires_grad
+                    and (
+                        (n in decay_param_names)
+                        or n.endswith(".bias")
+                        or (".norm." in n)
+                        or n.endswith("norm.weight")
+                    )
+                ],
+                "weight_decay": 0.0,
+            },
+        ]
+
+        self.optimizer = torch.optim.Muon(
+            optimizer_grouped_parameters,
+            lr=lr,
+            weight_decay=weight_decay,
+            **muon_kwargs,
+        )
+        return self.optimizer
 
     def compute_loss(
         self,

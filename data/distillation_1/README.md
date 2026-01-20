@@ -1,6 +1,6 @@
-# Distillation Phase 1 (8k) — distill datasets (offline)
+# Distillation Phase 1 (4k) — distill datasets (offline)
 
-This directory documents how we build the **Phase 1 (8k)** distillation datasets (offline, teacher-forced DistillKit style).
+This directory documents how we build the **Phase 1 (4k)** distillation datasets (offline, teacher-forced DistillKit style).
 
 Outputs are written to `/data/distillation_1/...` inside the container.
 
@@ -8,15 +8,16 @@ Outputs are written to `/data/distillation_1/...` inside the container.
 
 The canonical, interleaved Phase‑1 dataset directory is:
 
-- `/data/distillation_1/phase1_mix_8k_665m`
+- `/data/distillation_1/phase1_mix_4k_665m`
 
-This is built by merging the component datasets below with:
+This is built end-to-end with:
 
 ```
-scripts/run_phase1_merge_8k_665m.sh
+scripts/run_phase1_build_4k_665m.sh
 ```
 
-Do not point training at the older `/data/distillation_1/phase1_mix_8k` output (it was an earlier merge run).
+Legacy note: `/data/distillation_1/phase1_mix_8k_665m` (and related 8k outputs) are from an earlier run and are not the Phase‑1
+short‑context target anymore.
 
 ## What was built
 - Output format: DistillKit-ready parquet shards (`train/`, `validation/`), with:
@@ -28,7 +29,7 @@ Do not point training at the older `/data/distillation_1/phase1_mix_8k` output (
 
 ## Split / limits
 - Train/val split: **99/1** (deterministic by per-example id hash)
-- Max seq len: **8192**
+- Max seq len: **4096**
 - Packing: **not packed** here (pack at training time)
 
 ## Datasets in Phase 1
@@ -63,8 +64,8 @@ while IFS= read -r p; do
     src="$p"
   else
     # `synth_phase1_shards.txt` is a list of filenames like `synth_010.parquet`.
-    # Resolve relative entries under `/data/pleias_synth` (usually a symlink to `/datasets/PleIAs_synth`).
-    src="/data/pleias_synth/$p"
+    # Resolve relative entries under `/data/raw_0/pleias_synth` (often a symlink to `/datasets/PleIAs_synth`).
+    src="/data/raw_0/pleias_synth/$p"
   fi
   ln -sf "$src" "/data/synth_phase1/$b"
 done < data/distillation_1/synth_phase1_shards.txt
@@ -75,8 +76,8 @@ Build command (reference)
 PYARROW_NUM_THREADS=20 OMP_NUM_THREADS=20 \
 python3 scripts/build_synth_distill.py \
   --input-dir /data/synth_phase1 \
-  --output-dir /data/distillation_1/synth_distill_phase1_high_550m \
-  --max-seq-len 8192 \
+  --output-dir /data/distillation_1/synth_distill_phase1_high_550m_4k \
+  --max-seq-len 4096 \
   --batch-size 4096 \
   --english-frac 0.75 \
   --memorization-cap 0.70 \
@@ -98,8 +99,8 @@ Build command (reference)
 ```
 PYARROW_NUM_THREADS=20 OMP_NUM_THREADS=20 python3 scripts/build_opencode_distill.py \
   --input-dir /datasets/nvidia__OpenCodeInstruct/data \
-  --output-dir /data/distillation_1/code_opencodeinstruct_55m \
-  --max-seq-len 8192 \
+  --output-dir /data/distillation_1/code_opencodeinstruct_55m_4k \
+  --max-seq-len 4096 \
   --batch-size 4096 \
   --target-total-tokens 55000000 \
   --reasoning-level high \
@@ -118,8 +119,8 @@ Build command (reference)
 ```
 PYARROW_NUM_THREADS=20 OMP_NUM_THREADS=20 python3 scripts/build_nemotron_math_distill.py \
   --input /datasets/nvidia__Nemotron-Math-v2/data/low.jsonl \
-  --output-dir /data/distillation_1/math_nemotron_v2_low_55m \
-  --max-seq-len 8192 \
+  --output-dir /data/distillation_1/math_nemotron_v2_low_55m_4k \
+  --max-seq-len 4096 \
   --target-total-tokens 55000000 \
   --reasoning-level high \
   --drop-tool-rows
@@ -132,8 +133,8 @@ Build command (reference)
 ```
 PYARROW_NUM_THREADS=20 OMP_NUM_THREADS=20 python3 scripts/build_oasst2_distill.py \
   --input-dir /data/raw_0/OpenAssistant__oasst2 \
-  --output-dir /data/distillation_1/helpfulness_oasst2_15m \
-  --max-seq-len 8192 \
+  --output-dir /data/distillation_1/helpfulness_oasst2_15m_4k \
+  --max-seq-len 4096 \
   --target-total-tokens 15000000 \
   --english-frac 0.90 \
   --reasoning-level high
@@ -153,18 +154,18 @@ writes a new dataset with a canonical `source` struct (and a `meta_json` field t
 Example command:
 ```
 PYARROW_NUM_THREADS=20 OMP_NUM_THREADS=20 python3 scripts/merge_distill_datasets.py \
-  --input synth=/data/distillation_1/synth_distill_phase1_high_550m \
-  --input code=/data/distillation_1/code_opencodeinstruct_55m \
-  --input math=/data/distillation_1/math_nemotron_v2_low_55m \
-  --input chat=/data/distillation_1/helpfulness_oasst2_15m \
-  --output-dir /data/distillation_1/phase1_mix_8k_665m \
+  --input synth=/data/distillation_1/synth_distill_phase1_high_550m_4k \
+  --input code=/data/distillation_1/code_opencodeinstruct_55m_4k \
+  --input math=/data/distillation_1/math_nemotron_v2_low_55m_4k \
+  --input chat=/data/distillation_1/helpfulness_oasst2_15m_4k \
+  --output-dir /data/distillation_1/phase1_mix_4k_665m \
   --weight-by assistant_tokens \
   --seed 1337
 ```
 
 Helper script (same as above + stats + samples):
 ```
-scripts/run_phase1_merge_8k_665m.sh
+scripts/run_phase1_build_4k_665m.sh
 ```
 
-After that, you can point training at `/data/distillation_1/phase1_mix_8k_665m` and ignore the individual roots.
+After that, you can point training at `/data/distillation_1/phase1_mix_4k_665m` and ignore the individual roots.
