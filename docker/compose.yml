@@ -11,9 +11,15 @@ services:
     working_dir: /workspace/vpmoe
     volumes:
       - ..:/workspace/vpmoe
-      - ../data:/data
+      # Canonical host mounts (no per-machine compose overrides):
+      #   /data      -> writable workspace (caches, checkpoints, derived datasets)
+      #   /datasets  -> optional read-only raw datasets
+      - /data:/data
+      - /datasets:/datasets:ro
     environment:
       HF_HOME: /data/hf_cache
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
       TIKTOKEN_ENCODINGS_BASE: /data/hf_cache/tiktoken-encodings
       TIKTOKEN_RS_CACHE_DIR: /data/hf_cache/tiktoken-rs-cache
       # NGC images can enforce GPU allowlists; DGX Spark (GB10) may require bypass.

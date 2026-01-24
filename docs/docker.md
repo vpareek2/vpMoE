@@ -2,6 +2,24 @@
 
 vpMoE is **container-first**. All supported workflows should run inside the repo container.
 
+## One-shot setup
+
+From a fresh clone, run:
+
+```bash
+./setup.sh
+```
+
+This script:
+- creates `/data` and `/datasets` on the host if needed,
+- vendors Transformers at the pinned ref,
+- builds the container, and
+- starts the service.
+
+If you need private Hugging Face or W&B access, the script will prompt for tokens
+and save them to a local `.env` file (gitignored). You can also export `HF_TOKEN`
+and/or `WANDB_API_KEY` beforehand to skip prompts.
+
 ## Build
 
 ### Vendored Transformers (Required)
@@ -44,24 +62,20 @@ One-off shell:
 docker compose -f docker/compose.yml run --rm vpmoe bash
 ```
 
-## Local dataset mounts (recommended)
+## Canonical host mounts (no per-machine overrides)
 
-Copy the local override template:
+We standardize on **host-level** mounts so every machine uses the same paths:
 
-```bash
-cp docker/compose.local.example.yml docker/compose.local.yml
-```
+- **`/data` (host)** → `/data` (container, writable)
+- **`/datasets` (host)** → `/datasets` (container, read‑only; optional)
 
-Edit `docker/compose.local.yml` to mount your host datasets into the container. A common pattern:
-
-- mount `/path/to/datasets` (host) to `/datasets` (container, read-only)
-- keep `/data` (container) as the writable workspace for derived datasets and caches
-
-Then include both compose files when you run:
+`docker/compose.yml` already mounts these paths. That means **no `compose.local.yml`**
+and no per-machine edits. If the paths do not exist on the host, create them once:
 
 ```bash
-docker compose -f docker/compose.yml -f docker/compose.local.yml up -d
-docker compose -f docker/compose.yml -f docker/compose.local.yml exec vpmoe bash
+sudo mkdir -p /data /datasets
 ```
 
-Inside the container, prefer symlinks under `/data/raw_0` that point to `/datasets/...` so the rest of the tooling has a stable path.
+All caches, checkpoints, and derived datasets live under `/data`. Raw datasets
+(if you use them) live under `/datasets`. If you train from Hugging Face datasets,
+you can leave `/datasets` empty.

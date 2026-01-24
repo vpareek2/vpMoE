@@ -29,3 +29,6 @@ artifacts/
 *.nsys-rep
 
 /src/third_party/
+
+# Local secrets
+.env
