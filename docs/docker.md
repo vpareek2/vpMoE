@@ -15,6 +15,8 @@ This script:
 - vendors Transformers at the pinned ref,
 - builds the container, and
 - starts the service.
+If Docker is missing, the script will install Docker + Compose (Ubuntu/Debian).
+If NVIDIA drivers are present, it will also install the NVIDIA container toolkit.
 
 If you need private Hugging Face or W&B access, the script will prompt for tokens
 and save them to a local `.env` file (gitignored). You can also export `HF_TOKEN`
