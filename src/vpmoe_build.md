@@ -114,6 +114,9 @@ This is the “what changes” list when copying GPT‑OSS as the starting point
 ## 8) Distillation schedule (what we run first)
 
 - [ ] Stage 1 (short ctx): `seq_len=4096`, Phase‑1 dataset (~665M tokens), Arcee-style freezing (attention stack only).
+  - Eval cadence: target ~50M tokens between evals; for 8 GPUs with `per_device_train_batch_size=1` and `gradient_accumulation_steps=2`, set `eval_steps≈3125` (scale proportionally with world size/accumulation).
+  - Flash attention: for H100, prefer the FA3 sinks kernel from the Hugging Face hub (`kernels-community/vllm-flash-attn3`); keep FA2 as fallback if the kernel is unavailable.
+  - Kernels: enable `use_kernels=true` for the **student** to use RMSNorm/MegaBlocks kernels; **do not** enable kernels on the MXFP4 teacher because those kernels force BF16 paths.
   - Optimizer note: HF does not expose `torch.optim.Muon` via `optim=...` in our pinned Transformers, so DistillKit in this repo
     supports opting into Muon via `training_args.optim_args: "muon"` (optionally with `momentum/nesterov/ns_steps/eps`), while keeping
     `training_args.optim` set to any valid HF optimizer name (e.g. `adamw_torch`). Muon is applied to **2D parameters only** (as torch enforces);

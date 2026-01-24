@@ -1,9 +1,10 @@
-project_name: vpmoe-stage1-4k-attn-only
+project_name: vpmoe-stage1-4k-attn-only-local
 trust_remote_code: true
 model: /workspace/vpmoe/weights/vpmoe-20b-init
-output_path: /data/distill_runs/vpmoe_stage1_4k_attn_only
+output_path: /data/distill_runs/vpmoe_stage1_4k_attn_only_local
 use_flash_attention: true
 sequence_length: 4096
+resize_embeddings_to_multiple_of: 201088
 
 dataset:
   train_dataset:
@@ -13,6 +14,8 @@ dataset:
     disk_path: /data/distillation_1/phase1_mix_4k_665m
     split: validation
   seed: 12
+  num_samples: 4096
+  num_eval_samples: 256
 
 loss_functions:
   - function: cross_entropy
@@ -37,16 +40,18 @@ training_args:
   dataset_kwargs:
     skip_prepare_dataset: true
   packing: false
-  num_train_epochs: 1
+  max_steps: 1000
   per_device_train_batch_size: 1
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 2
+  per_device_eval_batch_size: 1
+  eval_steps: 100
   save_steps: 200
   save_total_limit: 2
   logging_steps: 1
-  learning_rate: 1.0e-5
-  weight_decay: 0.05
+  learning_rate: 1.0e-3
+  weight_decay: 0.0
   warmup_ratio: 0.025
-  lr_scheduler_type: cosine
+  lr_scheduler_type: linear
   bf16: true
   max_grad_norm: 0.5
   optim: adamw_torch
@@ -60,6 +65,4 @@ frozen_res:
   - ^model\.embed_tokens
   - ^lm_head
   - ^model\.norm
-  - ^model\.layers\.\d+\.input_layernorm
-  - ^model\.layers\.\d+\.post_attention_layernorm
   - ^model\.layers\.\d+\.mlp

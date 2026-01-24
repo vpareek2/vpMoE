@@ -6,7 +6,9 @@ import torch
 from transformers.trainer_pt_utils import get_parameter_names
 from transformers import (
     PreTrainedModel,
+    TrainerCallback,
 )
+from transformers.modeling_outputs import CausalLMOutput
 from trl import SFTTrainer
 
 from distillkit.configuration import DistillationRunConfig, LossFunctionConfig
@@ -15,6 +17,24 @@ from distillkit.lossfuncs import ALL_LOSS_CLASSES, LossFunctionBase
 from distillkit.signals import OnlineSignalSource, SignalSource, TeacherSignal
 
 LOG = logging.getLogger(__name__)
+
+
+class DistillEvalCallback(TrainerCallback):
+    def __init__(self, trainer: "DistillationTrainer") -> None:
+        self.trainer = trainer
+
+    def on_step_end(self, args, state, control, **kwargs):
+        eval_steps = getattr(args, "eval_steps", None)
+        if not eval_steps or eval_steps <= 0:
+            return control
+        if state.global_step == 0 or (state.global_step % eval_steps) != 0:
+            return control
+        if self.trainer.eval_dataset is None:
+            return control
+        metrics = self.trainer.evaluate_distill_subset()
+        if metrics:
+            self.trainer.log(metrics)
+        return control
 
 
 def create_loss_func(cfg: LossFunctionConfig) -> LossFunctionBase:
@@ -70,6 +90,9 @@ class DistillationTrainer(SFTTrainer):
             else:
                 teacher = teacher.to(self.accelerator.device)
             self.signal_source.teacher_model = teacher
+
+        if self.eval_dataset is not None and getattr(self.args, "eval_steps", None):
+            self.add_callback(DistillEvalCallback(self))
 
         self.model_accepts_loss_kwargs = False
 
@@ -333,6 +356,105 @@ class DistillationTrainer(SFTTrainer):
             num_items_in_batch=None,
         )
         return (total_loss, student_outputs) if return_outputs else total_loss
+
+    def _distill_losses_for_batch(
+        self,
+        student_outputs: CausalLMOutput,
+        inputs: dict[str, torch.Tensor],
+        num_items_in_batch: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        valid_mask = (inputs["labels"] >= 0).unsqueeze(-1)
+        signal: TeacherSignal = self.signal_source.get_signal(
+            inputs,
+            return_hidden_states=self.need_hidden_states,
+        )
+        losses: dict[str, torch.Tensor] = {}
+        for idx, loss_fn in enumerate(self.loss_functions):
+            cfg = self.config.loss_functions[idx]
+            losses[cfg.function.value] = loss_fn(
+                student_outputs,
+                signal,
+                mask=valid_mask,
+                hidden_state_mapping=self.hidden_state_mapping,
+                num_items_in_batch=num_items_in_batch,
+            )
+        return losses
+
+    @torch.no_grad()
+    def evaluate_distill_subset(self) -> dict[str, float]:
+        if self.eval_dataset is None:
+            return {}
+        self.model.eval()
+        device = self.accelerator.device
+        total_tokens = torch.tensor(0.0, device=device)
+        sums = {
+            "cross_entropy": torch.tensor(0.0, device=device),
+            "kl": torch.tensor(0.0, device=device),
+            "hs_cosine": torch.tensor(0.0, device=device),
+        }
+
+        dataloader = self.get_eval_dataloader()
+        for inputs in dataloader:
+            inputs = self._prepare_inputs(inputs)
+            if "labels" not in inputs:
+                inputs["labels"] = inputs["input_ids"]
+            if self.config.dataset.eos_label_token_ids:
+                inputs["labels"] = inputs["labels"].clone()
+                for tok_id in self.config.dataset.eos_label_token_ids:
+                    inputs["labels"][inputs["labels"] == tok_id] = (
+                        self.model.config.eos_token_id
+                    )
+
+            labels = inputs["labels"]
+            token_count = (labels >= 0).sum()
+            if token_count.item() == 0:
+                continue
+
+            student_model = self.model.module if hasattr(self.model, "module") else self.model
+            student_outputs = student_model(
+                **{
+                    k: inputs[k]
+                    for k in ["input_ids", "attention_mask", "labels"]
+                    if k in inputs
+                },
+                return_dict=True,
+                output_hidden_states=self.need_hidden_states,
+            )
+            if student_outputs.logits.shape[-1] != self.true_vocab_size:
+                student_outputs.logits = student_outputs.logits[..., : self.true_vocab_size]
+
+            losses = self._distill_losses_for_batch(
+                student_outputs,
+                inputs,
+                num_items_in_batch=token_count,
+            )
+            for key in sums:
+                if key in losses:
+                    sums[key] += losses[key] * token_count
+            total_tokens += token_count
+
+        total_tokens = self.accelerator.reduce(total_tokens, reduction="sum")
+        for key in sums:
+            sums[key] = self.accelerator.reduce(sums[key], reduction="sum")
+
+        metrics: dict[str, float] = {}
+        if total_tokens.item() > 0:
+            for key in sums:
+                metrics[f"eval_distill/{key}_token_avg"] = (
+                    sums[key] / total_tokens
+                ).item()
+            weighted = 0.0
+            weight_sum = 0.0
+            for idx, cfg in enumerate(self.config.loss_functions):
+                name = cfg.function.value
+                if name in sums:
+                    weighted += (sums[name] / total_tokens) * cfg.weight
+                    weight_sum += cfg.weight
+            if weight_sum > 0:
+                metrics["eval_distill/weighted_token_avg"] = (weighted / weight_sum).item()
+
+        self.model.train()
+        return metrics
 
     def total_distillation_loss(
         self, student_outputs, inputs, num_items_in_batch: int | None = None

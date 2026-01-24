@@ -31,6 +31,54 @@ from distillkit.trainer import DistillationTrainer
 
 LOG = logging.getLogger(__name__)
 
+def _distributed_local_device() -> str:
+    """
+    Return the single-GPU CUDA device this *process* should use.
+
+    In DDP/Accelerate multi-process runs, each process should load the teacher
+    on its local GPU, not shard across all visible GPUs (which would collide
+    across ranks).
+    """
+
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+
+    # If the launcher already restricts visibility to a single GPU per process
+    # (common for Accelerate), always map to cuda:0.
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cvd is not None:
+        visible = [x.strip() for x in cvd.split(",") if x.strip()]
+        if len(visible) <= 1:
+            return "cuda:0"
+
+    return f"cuda:{local_rank}"
+
+
+def _maybe_rewrite_teacher_device_map(teacher_kwargs: dict[str, Any]) -> dict[str, Any]:
+    """
+    In multi-process training, rewrite any teacher device_map to a per-process
+    single-GPU placement so each rank owns its own teacher instance.
+    """
+
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    if world_size <= 1:
+        return teacher_kwargs
+
+    rewritten = dict(teacher_kwargs)
+    if "device_map" not in rewritten:
+        # If no explicit device_map is provided, leave it unset; the trainer will
+        # move the teacher to the accelerator device.
+        return rewritten
+
+    device_map = rewritten["device_map"]
+    if isinstance(device_map, str):
+        rewritten["device_map"] = _distributed_local_device()
+        return rewritten
+
+    raise ValueError(
+        "teacher.kwargs.device_map must be a string (e.g., 'cuda:0' or 'auto'); "
+        "dict-style device_map is not supported for multi-process runs."
+    )
+
 
 def _format_row(
     example: dict[str, Any], tokenizer: transformers.PreTrainedTokenizer
@@ -259,8 +307,9 @@ def create_signal_source(
         )
         return OfflineSignalSource(compressor, vocab_size=vocab_size)
     elif isinstance(config.teacher, TeacherModelConfig):
+        teacher_kwargs = _maybe_rewrite_teacher_device_map(config.teacher.kwargs or {})
         teacher_model = transformers.AutoModelForCausalLM.from_pretrained(
-            config.teacher.path, **(config.teacher.kwargs or {})
+            config.teacher.path, **teacher_kwargs
         )
         return OnlineSignalSource(
             teacher_model, vocab_size=vocab_size, sparsify_top_k=config.teacher.top_k
