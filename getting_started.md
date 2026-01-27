@@ -2,35 +2,23 @@
 
 This is the **copy‑paste** path to run a 2×H100 smoke test first, then scale to 8×H100.
 
-## 1) Clone + vendored Transformers
+## 1) Clone + one-shot setup
 
 ```bash
 git clone <REPO_URL> vpMoE
 cd vpMoE
 
-mkdir -p ../data
-
-mkdir -p src/third_party
-git clone https://github.com/huggingface/transformers.git src/third_party/transformers
-cd src/third_party/transformers
-git checkout v4.57.6
-cd ../../../
+./setup.sh
 ```
 
-## 2) Build the container
-
-```bash
-docker compose -f docker/compose.yml build vpmoe
-```
-
-## 3) Start the container
+## 2) Start the container + attach
 
 ```bash
 docker compose -f docker/compose.yml up -d
 docker compose -f docker/compose.yml exec vpmoe bash
 ```
 
-## 4) Inside the container: auth + dataset
+## 3) Inside the container: auth + dataset
 
 ```bash
 hf auth login
@@ -49,14 +37,14 @@ hf download veerpareek/vpmoe-20b-init --local-dir /data/hf_cache/vpmoe-20b-init
 hf download openai/gpt-oss-20b --local-dir /data/hf_cache/gpt-oss-20b
 ```
 
-## 5) 2×H100 smoke run
+## 4) 2×H100 smoke run
 
 ```bash
 torchrun --nproc_per_node=2 -m distillkit.main \
   configs/distillkit/vpmoe_distill_1_smoke_2xh100.yaml
 ```
 
-## 6) 8×H100 full run
+## 5) 8×H100 full run
 
 ```bash
 torchrun --nproc_per_node=8 -m distillkit.main \
@@ -65,6 +53,6 @@ torchrun --nproc_per_node=8 -m distillkit.main \
 
 ## Notes
 
-- `docker/compose.yml` mounts a host directory **sibling to the repo** as `/data`
-  in the container. If you want to control that mount, adjust the compose file.
+- `docker/compose.yml` mounts host `/data` as `/data` in the container.
+- The repo is bind-mounted into `/workspace/vpmoe`, so code edits are live.
 - Outputs land under `/data/distill_runs/...`.

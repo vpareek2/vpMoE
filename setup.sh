@@ -4,9 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"
 
-TRANSFORMERS_DIR="${REPO_ROOT}/src/third_party/transformers"
-TRANSFORMERS_REF="${TRANSFORMERS_REF:-v4.57.6}"
-
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "missing required command: $1" >&2
@@ -56,8 +53,6 @@ for arg in "$@"; do
   esac
 done
 
-need_cmd git
-
 compose_cmd=""
 
 ensure_dir /data
@@ -104,6 +99,7 @@ upsert_env_var() {
 }
 
 ENV_FILE="${REPO_ROOT}/.env"
+LOCK_FILE="${REPO_ROOT}/docker/image.lock"
 
 is_root() {
   [[ "$(id -u)" -eq 0 ]]
@@ -204,6 +200,20 @@ if command -v nvidia-smi >/dev/null 2>&1 || [[ -e /proc/driver/nvidia/version ]]
   install_nvidia_container_toolkit
 fi
 
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+fi
+
+if [[ -f "${LOCK_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${LOCK_FILE}"
+  set +a
+fi
+
 if [[ -n "${HUGGING_FACE_HUB_TOKEN:-}" && -z "${HF_TOKEN:-}" ]]; then
   export HF_TOKEN="${HUGGING_FACE_HUB_TOKEN}"
 fi
@@ -220,19 +230,8 @@ if [[ -n "${HF_TOKEN:-}" || -n "${HUGGING_FACE_HUB_TOKEN:-}" || -n "${WANDB_API_
   chmod 600 "${ENV_FILE}" 2>/dev/null || true
 fi
 
-mkdir -p "${REPO_ROOT}/src/third_party"
-
-if [[ ! -d "${TRANSFORMERS_DIR}/.git" ]]; then
-  echo "Cloning transformers into ${TRANSFORMERS_DIR}..." >&2
-  git clone --filter=blob:none https://github.com/huggingface/transformers.git "${TRANSFORMERS_DIR}"
-fi
-
-echo "Pinning transformers to ${TRANSFORMERS_REF}..." >&2
-git -C "${TRANSFORMERS_DIR}" fetch --tags --force
-git -C "${TRANSFORMERS_DIR}" checkout -q "${TRANSFORMERS_REF}"
-
-echo "Building vpmoe container..." >&2
-${compose_cmd} -f docker/compose.yml build vpmoe
+echo "Pulling vpmoe image..." >&2
+${compose_cmd} -f docker/compose.yml pull vpmoe
 
 echo "Starting vpmoe container..." >&2
 ${compose_cmd} -f docker/compose.yml up -d

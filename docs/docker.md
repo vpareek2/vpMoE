@@ -2,7 +2,7 @@
 
 vpMoE is **container-first**. All supported workflows should run inside the repo container.
 
-## One-shot setup
+## One-shot setup (pull-only)
 
 From a fresh clone, run:
 
@@ -12,8 +12,10 @@ From a fresh clone, run:
 
 This script:
 - creates `/data` and `/datasets` on the host if needed,
-- vendors Transformers at the pinned ref,
-- builds the container, and
+- installs Docker + Compose if missing (Ubuntu/Debian),
+- installs the NVIDIA container toolkit if NVIDIA drivers are present,
+- reads `docker/image.lock` for the canonical image,
+- pulls the canonical image, and
 - starts the service.
 If Docker is missing, the script will install Docker + Compose (Ubuntu/Debian).
 If NVIDIA drivers are present, it will also install the NVIDIA container toolkit.
@@ -22,33 +24,52 @@ If you need private Hugging Face or W&B access, the script will prompt for token
 and save them to a local `.env` file (gitignored). You can also export `HF_TOKEN`
 and/or `WANDB_API_KEY` beforehand to skip prompts.
 
-## Build
+## Build + publish (builder machines only)
 
-### Vendored Transformers (Required)
-
-This repo expects a local Transformers source checkout at `src/third_party/transformers`, installed into the container as the `transformers` package. This keeps GPT-OSS customization in a single, reproducible codebase without import shims.
-
-Clone (pin to the same commit/tag as the container expects):
+The canonical image is defined in `docker/image.lock` and is pulled by default.
+If you need to rebuild and push (e.g., bugfixes or dependency updates), use:
 
 ```bash
-mkdir -p src/third_party
-git clone https://github.com/huggingface/transformers.git src/third_party/transformers
-cd src/third_party/transformers
-git checkout v4.57.6
+scripts/build_image.sh
 ```
 
+To push to GHCR:
+
 ```bash
-docker compose -f docker/compose.yml build vpmoe
+scripts/build_image.sh --push
 ```
 
-The container also installs the local DistillKit checkout at `src/DistillKit`
-so the `distillkit` CLI is available inside the image.
-
-Override base image (optional):
+If you're on an ARM64 machine (e.g., some Blackwell nodes), cross-build an amd64
+image with buildx:
 
 ```bash
-VPMOE_BASE_IMAGE=nvcr.io/nvidia/pytorch:<tag> \
-  docker compose -f docker/compose.yml build vpmoe
+docker run --privileged --rm tonistiigi/binfmt --install amd64
+scripts/build_image.sh --push --platform linux/amd64
+```
+
+You must be logged in to GHCR on the builder machine:
+
+```bash
+docker login ghcr.io -u <github-username>
+```
+
+If you want zero-auth pulls on new machines, set the GHCR package visibility
+to **Public** after the first push.
+
+This will:
+- build from `docker/Dockerfile`,
+- clone and install Transformers at the pinned ref (`TRANSFORMERS_REF`), and
+- tag the image as `:main` and `:sha-<gitsha>`.
+
+`docker/image.lock` is the single source of truth for:
+- `VPMOE_IMAGE`
+- `VPMOE_BASE_IMAGE` (pinned by digest)
+- `TRANSFORMERS_REF`
+
+You can override the base image and Transformers ref by exporting:
+
+```bash
+VPMOE_BASE_IMAGE=... TRANSFORMERS_REF=... scripts/build_image.sh
 ```
 
 ## Run + attach
@@ -64,6 +85,10 @@ One-off shell:
 docker compose -f docker/compose.yml run --rm vpmoe bash
 ```
 
+The canonical container **bind-mounts the repo** so edits to `src/` are live.
+If you change dependencies (e.g., `requirements.txt`), rebuild and push a new image
+with `scripts/build_image.sh`.
+
 ## Canonical host mounts (no per-machine overrides)
 
 We standardize on **host-level** mounts so every machine uses the same paths:
@@ -71,8 +96,8 @@ We standardize on **host-level** mounts so every machine uses the same paths:
 - **`/data` (host)** → `/data` (container, writable)
 - **`/datasets` (host)** → `/datasets` (container, read‑only; optional)
 
-`docker/compose.yml` already mounts these paths. That means **no `compose.local.yml`**
-and no per-machine edits. If the paths do not exist on the host, create them once:
+`docker/compose.yml` already mounts these paths. That means **no per-machine edits**.
+If the paths do not exist on the host, create them once:
 
 ```bash
 sudo mkdir -p /data /datasets

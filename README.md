@@ -12,17 +12,10 @@ Container-first runbook: `docs/docker.md`
 
 ## Docker (Recommended)
 
-Build:
+One-shot setup (pulls the canonical image, starts the container):
 
 ```bash
-docker compose -f docker/compose.yml build vpmoe
-```
-
-Build (override base image):
-
-```bash
-VPMOE_BASE_IMAGE=nvcr.io/nvidia/pytorch:<tag> \
-  docker compose -f docker/compose.yml build vpmoe
+./setup.sh
 ```
 
 Run:
@@ -31,6 +24,10 @@ Run:
 docker compose -f docker/compose.yml up -d
 docker compose -f docker/compose.yml exec vpmoe bash
 ```
+
+Notes:
+- The container bind-mounts the repo, so edits to `src/` are live.
+- If you change Python deps, rebuild and push a new image (`scripts/build_image.sh --push`).
 
 One-off shell:
 
@@ -50,6 +47,5 @@ python3 scripts/teacher_probe.py \
 ```
 
 Notes:
-- Default base image is `nvcr.io/nvidia/vllm:25.12.post1-py3` (override with `VPMOE_BASE_IMAGE=...` if needed).
+- Default base image is pinned in `docker/image.lock` (override with `VPMOE_BASE_IMAGE=...` if needed).
 - For higher throughput on 20B, try `--batch-size 8` (tune per GPU / prompt lengths).
-- If vLLM is available in the image, you can use `--backend vllm`.

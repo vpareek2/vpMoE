@@ -426,7 +426,7 @@ def main() -> int:
                 except Exception as exc:
                     raise SystemExit(
                         "Backend 'vllm' requested but vLLM is not available in this container. "
-                        "Use the NVIDIA vLLM base image or install vLLM in the image."
+                        "Install vLLM in the image or use a vLLM-enabled container build."
                     ) from exc
 
                 cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=args.trust_remote_code)

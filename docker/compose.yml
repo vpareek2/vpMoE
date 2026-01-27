@@ -1,13 +1,7 @@
 services:
   vpmoe:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-      args:
-        # Override per-machine if needed:
-        #   VPMOE_BASE_IMAGE=nvcr.io/nvidia/pytorch:<tag>
-        BASE_IMAGE: ${VPMOE_BASE_IMAGE:-nvcr.io/nvidia/vllm:25.12.post1-py3}
-    image: vpmoe:latest
+    image: ${VPMOE_IMAGE:-ghcr.io/vpareek2/vpmoe:main}
+    pull_policy: always
     working_dir: /workspace/vpmoe
     volumes:
       - ..:/workspace/vpmoe
@@ -20,10 +14,9 @@ services:
       HF_HOME: /data/hf_cache
       HF_TOKEN: ${HF_TOKEN:-}
       HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
       TIKTOKEN_ENCODINGS_BASE: /data/hf_cache/tiktoken-encodings
       TIKTOKEN_RS_CACHE_DIR: /data/hf_cache/tiktoken-rs-cache
-      # NGC images can enforce GPU allowlists; DGX Spark (GB10) may require bypass.
-      NVIDIA_DISABLE_REQUIRE: '1'
     gpus: all
     ipc: host
     command: ["sleep", "infinity"]

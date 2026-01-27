@@ -13,6 +13,7 @@ __pycache__
 .venv
 .uv
 .DS_Store
+.env
 ref/
 docs/research/
 data/
@@ -21,3 +22,7 @@ artifacts/
 reports/
 wandb/
 outputs/
+
+# The canonical image is a dependency environment; never ship local 3P checkouts
+# or model artifacts that may exist under src/third_party/.
+src/third_party/

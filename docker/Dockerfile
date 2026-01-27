@@ -1,9 +1,10 @@
-ARG BASE_IMAGE=nvcr.io/nvidia/vllm:25.12.post1-py3
+ARG BASE_IMAGE=pytorch/pytorch:2.10.0-cuda12.6-cudnn9-devel
 FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-lc"]
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -15,22 +16,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /workspace/vpmoe
 
 COPY requirements.txt /workspace/vpmoe/
-RUN python3 -m pip install --upgrade pip && \
-    python3 -m pip install --no-cache-dir -r requirements.txt
+RUN python3 -m pip install --break-system-packages --upgrade pip && \
+    python3 -m pip install --break-system-packages --no-cache-dir -r requirements.txt
 
-COPY . /workspace/vpmoe
-
-RUN if [[ ! -d src/third_party/transformers ]]; then \
-      echo "ERROR: Missing vendored Transformers checkout at src/third_party/transformers." >&2; \
-      echo "Clone it (pinned) before building the container. See docs/docker.md." >&2; \
-      exit 1; \
-    fi && \
+ARG TRANSFORMERS_REPO=https://github.com/huggingface/transformers.git
+ARG TRANSFORMERS_REF=v4.57.6
+RUN git clone --filter=blob:none --depth 1 --branch "${TRANSFORMERS_REF}" "${TRANSFORMERS_REPO}" /opt/transformers && \
     python3 -m pip uninstall -y transformers || true && \
-    python3 -m pip install --no-cache-dir -e src/third_party/transformers
+    python3 -m pip install --break-system-packages --no-cache-dir -e /opt/transformers
 
-# Install the local DistillKit checkout (no deps; requirements.txt covers them).
-RUN python3 -m pip install --no-cache-dir --no-deps -e src/DistillKit
-
-ENV PYTHONPATH=/workspace/vpmoe:/workspace/vpmoe/vpmoe/Megatron-vpmoe
+# This image is a pinned dependency/runtime environment. The repo is bind-mounted
+# at runtime (see docker/compose.yml), so do not COPY the full workspace here.
+#
+# Keep repo-root and src/ on the import path, and expose DistillKit from the
+# bind-mounted checkout (so local edits are live).
+ENV PYTHONPATH=/workspace/vpmoe:/workspace/vpmoe/src:/workspace/vpmoe/src/DistillKit
 
 CMD ["/bin/bash"]
