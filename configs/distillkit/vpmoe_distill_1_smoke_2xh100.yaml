@@ -42,7 +42,7 @@ teacher:
     kind: hf
     path: openai/gpt-oss-20b
     kwargs:
-        attn_implementation: kernels-community/vllm-flash-attn3
+        attn_implementation: flash_attention_2
         torch_dtype: bfloat16
         use_cache: false
 

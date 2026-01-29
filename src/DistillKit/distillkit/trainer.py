@@ -282,10 +282,10 @@ class DistillationTrainer(SFTTrainer):
         )
 
         class _MuonAdamWComposite(torch.optim.Optimizer):
-            def __init__(self, muon: torch.optim.Optimizer, adamw: torch.optim.Optimizer):
+            def __init__(self, muon: torch.optim.Optimizer, adamw: torch.optim.Optimizer, lr: float):
                 # Register param_groups with the base class for HF/Accelerate compatibility.
                 merged_groups = list(muon.param_groups) + list(adamw.param_groups)
-                super().__init__(merged_groups, defaults={})
+                super().__init__(merged_groups, defaults={"lr": lr})
                 self._muon = muon
                 self._adamw = adamw
 
@@ -316,7 +316,7 @@ class DistillationTrainer(SFTTrainer):
                 self._muon.load_state_dict(state_dict.get("muon", {}))
                 self._adamw.load_state_dict(state_dict.get("adamw", {}))
 
-        self.optimizer = _MuonAdamWComposite(muon_opt, adamw_opt)
+        self.optimizer = _MuonAdamWComposite(muon_opt, adamw_opt, lr)
         return self.optimizer
 
     def compute_loss(
