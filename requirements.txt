@@ -19,6 +19,6 @@ tokenizers>=0.20.1
 tqdm>=4.67.1
 accelerate
 trl~=0.25.1
-
+wandb
 # NOTE: transformers is installed from the vendored source checkout at
 # `src/third_party/transformers` (see `docs/docker.md`).
