@@ -121,6 +121,13 @@ This is the “what changes” list when copying GPT‑OSS as the starting point
     supports opting into Muon via `training_args.optim_args: "muon"` (optionally with `momentum/nesterov/ns_steps/eps`), while keeping
     `training_args.optim` set to any valid HF optimizer name (e.g. `adamw_torch`). Muon is applied to **2D parameters only** (as torch enforces);
     all non‑2D trainable params (biases, norm weights, sink logits, etc.) use AdamW.
+  - Muon stability note: Muon is tuned for **large global batch**. Expect spiky loss/grad norms in tiny-batch smoke runs. For real runs, raise
+    global batch (e.g., increase `gradient_accumulation_steps`), use a longer warmup (e.g., `warmup_ratio=0.05–0.1`), and consider a slightly
+    lower peak LR.
+  - Moonlight-aligned Muon params: use nonzero weight decay and per-matrix update scaling. Example:
+    `optim_args: "muon,lr=0.02,wd=0.1,update_scale=0.2,momentum=0.95,nesterov=true,ns_steps=5,adamw_lr=3e-4,adamw_wd=0.1"`.
+  - Smoke baseline (2026‑01‑29, 2×B200, `use_kernels=false`, `flash_attention_2`, seq_len=4096, steps=200): train_runtime=1207.85s,
+    steps/s=0.166, samples/s=0.331, train_loss=3.4137, eval weighted token avg=3.4323.
 - [ ] Stage 2 (long ctx): target `seq_len=32768` (32k), unfreeze experts, keep router frozen; revisit router only if diagnostics demand.
 
 ## 9) Diagnostics + evaluation (gates)

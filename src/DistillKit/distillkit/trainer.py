@@ -1,6 +1,7 @@
 # Copyright 2024 Charles O. Goddard
 
 import logging
+import math
 
 import torch
 from transformers.trainer_pt_utils import get_parameter_names
@@ -44,6 +45,98 @@ def create_loss_func(cfg: LossFunctionConfig) -> LossFunctionBase:
                 **cfg.model_dump(exclude=["function", "weight"], exclude_none=True)
             )
     raise RuntimeError(f"Unknown loss function '{cfg.function}'")
+
+
+def _zeropower_via_newtonschulz5(G: torch.Tensor, steps: int) -> torch.Tensor:
+    """
+    Moonlight-style Newton–Schulz iteration to orthogonalize G (2D).
+    Ported from ref/Moonlight/examples/toy_train.py.
+    """
+    assert len(G.shape) == 2
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    X = G.to(torch.bfloat16)
+    transposed = False
+    if G.size(0) > G.size(1):
+        X = X.T
+        transposed = True
+    X = X / (X.norm() + 1e-7)
+    for _ in range(steps):
+        A = X @ X.T
+        B = b * A + c * A @ A
+        X = a * X + B @ X
+    if transposed:
+        X = X.T
+    return X
+
+
+class MoonlightMuon(torch.optim.Optimizer):
+    """
+    Moonlight-style Muon optimizer for 2D params with per-matrix update scaling.
+    Uses SGD-momentum + Newton–Schulz orthogonalization. Weight decay is applied
+    using the group lr (as in Moonlight).
+    """
+
+    def __init__(
+        self,
+        params,
+        lr: float = 1e-3,
+        weight_decay: float = 0.1,
+        momentum: float = 0.95,
+        nesterov: bool = True,
+        ns_steps: int = 5,
+        update_scale: float = 0.2,
+    ):
+        defaults = dict(
+            lr=lr,
+            weight_decay=weight_decay,
+            momentum=momentum,
+            nesterov=nesterov,
+            ns_steps=ns_steps,
+            update_scale=update_scale,
+        )
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            lr = float(group["lr"])
+            wd = float(group.get("weight_decay", 0.0))
+            momentum = float(group.get("momentum", 0.95))
+            nesterov = bool(group.get("nesterov", True))
+            ns_steps = int(group.get("ns_steps", 5))
+            update_scale = float(group.get("update_scale", 0.2))
+
+            for p in group["params"]:
+                g = p.grad
+                if g is None:
+                    continue
+                if g.ndim > 2:
+                    g = g.view(g.size(0), -1)
+                state = self.state[p]
+                if "momentum_buffer" not in state:
+                    state["momentum_buffer"] = torch.zeros_like(g)
+                buf = state["momentum_buffer"]
+                buf.mul_(momentum).add_(g)
+                if nesterov:
+                    g = g.add(buf, alpha=momentum)
+                else:
+                    g = buf
+
+                u = _zeropower_via_newtonschulz5(g, steps=ns_steps)
+
+                a, b = p.shape[:2]
+                adjusted_lr = lr * update_scale * math.sqrt(max(a, b))
+
+                if wd:
+                    p.data.mul_(1 - lr * wd)
+                p.data.add_(u, alpha=-adjusted_lr)
+
+        return loss
 
 
 class DistillationTrainer(SFTTrainer):
@@ -104,7 +197,7 @@ class DistillationTrainer(SFTTrainer):
         HF does not expose torch.optim.Muon via TrainingArguments.optim, so we
         opt into Muon by setting:
           optim_args: "muon" (defaults)
-          optim_args: "muon,momentum=0.95,nesterov=true,ns_steps=5,eps=1e-7"
+          optim_args: "muon,lr=0.02,wd=0.1,update_scale=0.2,momentum=0.95,nesterov=true,ns_steps=5"
         """
 
         if not value:
@@ -126,7 +219,7 @@ class DistillationTrainer(SFTTrainer):
             if not key:
                 raise ValueError(f"Invalid optim_args token '{part}'. Empty key.")
 
-            if key in {"momentum", "eps"}:
+            if key in {"momentum", "eps", "lr", "muon_lr", "adamw_lr", "wd", "muon_wd", "adamw_wd", "update_scale"}:
                 out[key] = float(val)
             elif key in {"ns_steps"}:
                 out[key] = int(val)
@@ -141,7 +234,7 @@ class DistillationTrainer(SFTTrainer):
             else:
                 raise ValueError(
                     f"Unsupported Muon optim_args key '{key}'. "
-                    "Supported keys: momentum, nesterov, ns_steps, eps."
+                    "Supported keys: lr|muon_lr, adamw_lr, wd|muon_wd, adamw_wd, update_scale, momentum, nesterov, ns_steps, eps."
                 )
         return out
 
@@ -153,11 +246,19 @@ class DistillationTrainer(SFTTrainer):
         if muon_kwargs is None:
             return super().create_optimizer()
 
-        # Muon only supports 2D parameters (torch enforces this), so we run Muon
+        # Muon only supports 2D parameters, so we run Muon
         # on matrix-shaped weights and fall back to AdamW for everything else
         # (biases, norms, sink logits, etc.).
         weight_decay = float(getattr(self.args, "weight_decay", 0.0))
         lr = float(getattr(self.args, "learning_rate", 1e-3))
+        muon_lr = float(muon_kwargs.get("muon_lr", muon_kwargs.get("lr", lr)))
+        adamw_lr = float(muon_kwargs.get("adamw_lr", lr))
+        muon_wd = float(muon_kwargs.get("muon_wd", muon_kwargs.get("wd", weight_decay)))
+        adamw_wd = float(muon_kwargs.get("adamw_wd", weight_decay))
+        muon_update_scale = float(muon_kwargs.get("update_scale", 0.2))
+        muon_momentum = float(muon_kwargs.get("momentum", 0.95))
+        muon_nesterov = bool(muon_kwargs.get("nesterov", True))
+        muon_ns_steps = int(muon_kwargs.get("ns_steps", 5))
 
         # No-decay policy: biases + norm weights.
         # Note: transformers.ALL_LAYERNORM_LAYERS does not include RMSNorm in 4.57.6,
@@ -249,25 +350,64 @@ class DistillationTrainer(SFTTrainer):
                 non2d_tensors,
                 non2d_elems,
             )
+            LOG.info(
+                "Muon hparams: muon_lr=%.6g adamw_lr=%.6g muon_wd=%.6g adamw_wd=%.6g "
+                "update_scale=%.6g momentum=%.6g nesterov=%s ns_steps=%d",
+                muon_lr,
+                adamw_lr,
+                muon_wd,
+                adamw_wd,
+                muon_update_scale,
+                muon_momentum,
+                muon_nesterov,
+                muon_ns_steps,
+            )
 
         muon_param_groups = []
         if muon_decay:
-            muon_param_groups.append({"params": muon_decay, "weight_decay": weight_decay})
+            muon_param_groups.append(
+                {
+                    "params": muon_decay,
+                    "lr": muon_lr,
+                    "weight_decay": muon_wd,
+                    "momentum": muon_momentum,
+                    "nesterov": muon_nesterov,
+                    "ns_steps": muon_ns_steps,
+                    "update_scale": muon_update_scale,
+                }
+            )
         if muon_no_decay:
-            muon_param_groups.append({"params": muon_no_decay, "weight_decay": 0.0})
+            muon_param_groups.append(
+                {
+                    "params": muon_no_decay,
+                    "lr": muon_lr,
+                    "weight_decay": 0.0,
+                    "momentum": muon_momentum,
+                    "nesterov": muon_nesterov,
+                    "ns_steps": muon_ns_steps,
+                    "update_scale": muon_update_scale,
+                }
+            )
 
-        muon_opt = torch.optim.Muon(
+        muon_opt = MoonlightMuon(
             muon_param_groups,
-            lr=lr,
-            weight_decay=weight_decay,
-            **muon_kwargs,
+            lr=muon_lr,
+            weight_decay=muon_wd,
+            momentum=muon_momentum,
+            nesterov=muon_nesterov,
+            ns_steps=muon_ns_steps,
+            update_scale=muon_update_scale,
         )
 
         adamw_param_groups = []
         if adamw_decay:
-            adamw_param_groups.append({"params": adamw_decay, "weight_decay": weight_decay})
+            adamw_param_groups.append(
+                {"params": adamw_decay, "lr": adamw_lr, "weight_decay": adamw_wd}
+            )
         if adamw_no_decay:
-            adamw_param_groups.append({"params": adamw_no_decay, "weight_decay": 0.0})
+            adamw_param_groups.append(
+                {"params": adamw_no_decay, "lr": adamw_lr, "weight_decay": 0.0}
+            )
 
         if not adamw_decay and not adamw_no_decay:
             self.optimizer = muon_opt
@@ -275,7 +415,7 @@ class DistillationTrainer(SFTTrainer):
 
         adamw_opt = torch.optim.AdamW(
             adamw_param_groups,
-            lr=lr,
+            lr=adamw_lr,
             betas=(float(self.args.adam_beta1), float(self.args.adam_beta2)),
             eps=float(self.args.adam_epsilon),
             weight_decay=0.0,
@@ -316,7 +456,7 @@ class DistillationTrainer(SFTTrainer):
                 self._muon.load_state_dict(state_dict.get("muon", {}))
                 self._adamw.load_state_dict(state_dict.get("adamw", {}))
 
-        self.optimizer = _MuonAdamWComposite(muon_opt, adamw_opt, lr)
+        self.optimizer = _MuonAdamWComposite(muon_opt, adamw_opt, adamw_lr)
         return self.optimizer
 
     def compute_loss(

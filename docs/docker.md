@@ -120,3 +120,12 @@ sudo mkdir -p /data /datasets
 All caches, checkpoints, and derived datasets live under `/data`. Raw datasets
 (if you use them) live under `/datasets`. If you train from Hugging Face datasets,
 you can leave `/datasets` empty.
+
+## Known-good pins (reference)
+
+When debugging across machines, it helps to record the exact repo SHA + image tag
+that was validated end-to-end on a target GPU.
+
+- 2026-01-29 (B200):
+  - repo SHA: `ad06146d9bb1d80f22e72b531901e8b402f265fc`
+  - image: `ghcr.io/vpareek2/vpmoe:cuda12.8` (local image id observed: `d5f791d6bff4`)
