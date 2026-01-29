@@ -14,8 +14,10 @@ This script:
 - creates `/data` and `/datasets` on the host if needed,
 - installs Docker + Compose if missing (Ubuntu/Debian),
 - installs the NVIDIA container toolkit if NVIDIA drivers are present,
-- reads `docker/image.lock` for the canonical image,
-- pulls the canonical image, and
+- reads `docker/image.lock` for the canonical images,
+- auto-selects the right image for your GPU (B200 vs non‑B200), unless you
+  explicitly set `VPMOE_IMAGE`, then
+- pulls the selected image, and
 - starts the service.
 If Docker is missing, the script will install Docker + Compose (Ubuntu/Debian).
 If NVIDIA drivers are present, it will also install the NVIDIA container toolkit.
@@ -26,7 +28,7 @@ and/or `WANDB_API_KEY` beforehand to skip prompts.
 
 ## Build + publish (builder machines only)
 
-The canonical image is defined in `docker/image.lock` and is pulled by default.
+The canonical images are defined in `docker/image.lock` and are pulled by default.
 If you need to rebuild and push (e.g., bugfixes or dependency updates), use:
 
 ```bash
@@ -63,13 +65,25 @@ This will:
 
 `docker/image.lock` is the single source of truth for:
 - `VPMOE_IMAGE`
+- `VPMOE_IMAGE_B200`
 - `VPMOE_BASE_IMAGE` (pinned by digest)
+- `VPMOE_BASE_IMAGE_CUDA12_8` (pinned by digest; for B200)
 - `TRANSFORMERS_REF`
 
 You can override the base image and Transformers ref by exporting:
 
 ```bash
 VPMOE_BASE_IMAGE=... TRANSFORMERS_REF=... scripts/build_image.sh
+```
+
+To build + push the B200-compatible image (CUDA 12.8 base), use the pinned
+values from the lock file:
+
+```bash
+set -a; source docker/image.lock; set +a
+scripts/build_image.sh --push --platform linux/amd64 \
+  --image "${VPMOE_IMAGE_B200}" \
+  --base-image "${VPMOE_BASE_IMAGE_CUDA12_8}"
 ```
 
 ## Run + attach

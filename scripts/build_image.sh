@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/build_image.sh [--push] [--platform <platform>]
+Usage: scripts/build_image.sh [--push] [--platform <platform>] [--image <ref>] [--base-image <ref>]
 
 Builds the vpMoE container image using docker/Dockerfile.
 Defaults are read from docker/image.lock, then environment overrides.
@@ -12,6 +12,8 @@ EOF
 
 push_image=0
 platform=""
+cli_image=""
+cli_base_image=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --push) push_image=1; shift ;;
@@ -22,6 +24,24 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       platform="$2"
+      shift 2
+      ;;
+    --image)
+      if [[ -z "${2:-}" ]]; then
+        echo "error: --image requires a value" >&2
+        usage
+        exit 1
+      fi
+      cli_image="$2"
+      shift 2
+      ;;
+    --base-image)
+      if [[ -z "${2:-}" ]]; then
+        echo "error: --base-image requires a value" >&2
+        usage
+        exit 1
+      fi
+      cli_base_image="$2"
       shift 2
       ;;
     --help|-h) usage; exit 0 ;;
@@ -44,6 +64,13 @@ VPMOE_IMAGE="${VPMOE_IMAGE:-ghcr.io/vpareek2/vpmoe:main}"
 VPMOE_BASE_IMAGE="${VPMOE_BASE_IMAGE:-pytorch/pytorch:2.10.0-cuda12.6-cudnn9-devel}"
 TRANSFORMERS_REF="${TRANSFORMERS_REF:-v4.57.6}"
 TRANSFORMERS_REPO="${TRANSFORMERS_REPO:-https://github.com/huggingface/transformers.git}"
+
+if [[ -n "${cli_image}" ]]; then
+  VPMOE_IMAGE="${cli_image}"
+fi
+if [[ -n "${cli_base_image}" ]]; then
+  VPMOE_BASE_IMAGE="${cli_base_image}"
+fi
 
 sha_tag=""
 if git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then

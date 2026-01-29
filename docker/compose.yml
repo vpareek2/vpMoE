@@ -1,6 +1,7 @@
 services:
   vpmoe:
     image: ${VPMOE_IMAGE:-ghcr.io/vpareek2/vpmoe:main}
+    platform: linux/amd64
     pull_policy: always
     working_dir: /workspace/vpmoe
     volumes:

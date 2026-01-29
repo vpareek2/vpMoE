@@ -207,12 +207,45 @@ if [[ -f "${ENV_FILE}" ]]; then
   set +a
 fi
 
+# Treat VPMOE_IMAGE set via env/.env as an explicit override. If it's not set
+# yet, we'll pick an image from docker/image.lock based on the detected GPU.
+pre_lock_vpmoe_image="${VPMOE_IMAGE:-}"
+
 if [[ -f "${LOCK_FILE}" ]]; then
   set -a
   # shellcheck disable=SC1090
   source "${LOCK_FILE}"
   set +a
 fi
+
+detect_b200() {
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    return 1
+  fi
+  local name
+  name="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1 || true)"
+  [[ "${name}" == *B200* ]]
+}
+
+select_vpmoe_image() {
+  # If the user already chose an image (env/.env), respect it.
+  if [[ -n "${pre_lock_vpmoe_image}" ]]; then
+    export VPMOE_IMAGE="${pre_lock_vpmoe_image}"
+    return 0
+  fi
+
+  local default_image
+  default_image="${VPMOE_IMAGE:-ghcr.io/vpareek2/vpmoe:main}"
+
+  if detect_b200 && [[ -n "${VPMOE_IMAGE_B200:-}" ]]; then
+    export VPMOE_IMAGE="${VPMOE_IMAGE_B200}"
+    return 0
+  fi
+
+  export VPMOE_IMAGE="${default_image}"
+}
+
+select_vpmoe_image
 
 if [[ -n "${HUGGING_FACE_HUB_TOKEN:-}" && -z "${HF_TOKEN:-}" ]]; then
   export HF_TOKEN="${HUGGING_FACE_HUB_TOKEN}"
@@ -231,7 +264,12 @@ if [[ -n "${HF_TOKEN:-}" || -n "${HUGGING_FACE_HUB_TOKEN:-}" || -n "${WANDB_API_
 fi
 
 echo "Pulling vpmoe image..." >&2
-${compose_cmd} -f docker/compose.yml pull vpmoe
+if ! ${compose_cmd} -f docker/compose.yml pull vpmoe; then
+  echo "error: failed to pull ${VPMOE_IMAGE}" >&2
+  echo "If you're on a provider that blocks anonymous GHCR pulls, run:" >&2
+  echo "  docker login ghcr.io -u <github-username>" >&2
+  exit 1
+fi
 
 echo "Starting vpmoe container..." >&2
 ${compose_cmd} -f docker/compose.yml up -d

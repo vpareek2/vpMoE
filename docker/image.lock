@@ -1,3 +1,5 @@
 VPMOE_IMAGE=ghcr.io/vpareek2/vpmoe:main
 VPMOE_BASE_IMAGE=pytorch/pytorch:2.10.0-cuda12.6-cudnn9-devel@sha256:df80e10d07cd114c5f33380e3df7b6c5a3caab8481f68509ea652a7c0908316e
+VPMOE_IMAGE_B200=ghcr.io/vpareek2/vpmoe:cuda12.8
+VPMOE_BASE_IMAGE_CUDA12_8=pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel@sha256:b574d4ccf6d8856a5d87dcadc667aa4f95dc18d337ef3a28d02b7b01897d7081
 TRANSFORMERS_REF=v4.57.6
