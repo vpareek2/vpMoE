@@ -43,7 +43,8 @@ teacher:
     path: openai/gpt-oss-20b
     kwargs:
         attn_implementation: flash_attention_2
-        torch_dtype: bfloat16
+        # gpt-oss weights are natively MXFP4; do not force BF16 here or we lose
+        # the memory/throughput benefits and can OOM on 80GB GPUs at 4k seq.
         use_cache: false
         device_map: "cuda"
 
