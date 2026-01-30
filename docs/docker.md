@@ -103,6 +103,29 @@ The canonical container **bind-mounts the repo** so edits to `src/` are live.
 If you change dependencies (e.g., `requirements.txt`), rebuild and push a new image
 with `scripts/build_image.sh`.
 
+## New machine preflight (recommended)
+
+Before burning money on a full run, verify:
+- training updates weights and checkpoints (trust-but-verify), and
+- what per-GPU microbatch fits at the target sequence length.
+
+Weights + checkpoint sanity check (2-step run, saves checkpoints):
+
+```bash
+python scripts/run_smoke_and_verify.py --nproc 2 --disable-wandb
+```
+
+Microbatch OOM probe + suggested `gradient_accumulation_steps` (for large global batch):
+
+```bash
+python scripts/autotune_microbatch.py \
+  --base-config configs/distillkit/vpmoe_distill_1_smoke_2xh100.yaml \
+  --nproc 8 \
+  --sequence-length 4096 \
+  --candidates 4,2,1 \
+  --targets 256,512
+```
+
 ## Canonical host mounts (no per-machine overrides)
 
 We standardize on **host-level** mounts so every machine uses the same paths:

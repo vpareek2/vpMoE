@@ -7,6 +7,7 @@ disk writes.
 
 import argparse
 import os
+from dataclasses import dataclass
 
 import yaml
 
@@ -22,6 +23,14 @@ from distillkit.signals import OnlineSignalSource
 from distillkit.hsd_mapping import HiddenStateMapping
 from distillkit.trainer import DistillationTrainer
 from trl import SFTConfig
+
+
+@dataclass
+class _ParamProbe:
+    name: str
+    dtype: str
+    requires_grad: bool
+    grad_max_abs: float | None = None
 
 
 def main() -> None:
@@ -117,6 +126,22 @@ def main() -> None:
     if args.param not in named:
         raise SystemExit(f"Param not found: {args.param}")
     p = named[args.param]
+    probe = _ParamProbe(
+        name=args.param,
+        dtype=str(p.dtype),
+        requires_grad=bool(p.requires_grad),
+    )
+
+    def _capture_grad(g):
+        # Trainer may zero grads after the optimizer step; capture during backward.
+        try:
+            probe.grad_max_abs = float(g.detach().abs().max().item())
+        except Exception:
+            probe.grad_max_abs = None
+        return g
+
+    if p.requires_grad:
+        p.register_hook(_capture_grad)
     before = p.detach().clone()
 
     trainer.train()
@@ -124,10 +149,25 @@ def main() -> None:
     after = p.detach().clone()
     print("in-mem diff:", (after - before).abs().max().item())
     print(
+        "param:",
+        probe.name,
+        "dtype:",
+        probe.dtype,
+        "requires_grad:",
+        probe.requires_grad,
+        "grad_max_abs:",
+        probe.grad_max_abs,
+    )
+    print(
         "param in optimizer:",
         any(p is q for g in trainer.optimizer.param_groups for q in g["params"]),
     )
-    print("lr groups:", [g["lr"] for g in trainer.optimizer.param_groups[:2]])
+    lrs = [float(g.get("lr", 0.0)) for g in trainer.optimizer.param_groups[:4]]
+    upd = [
+        float(g.get("update_scale", 0.0)) for g in trainer.optimizer.param_groups[:4]
+    ]
+    print("lr groups:", lrs)
+    print("update_scale groups:", upd)
 
 
 if __name__ == "__main__":

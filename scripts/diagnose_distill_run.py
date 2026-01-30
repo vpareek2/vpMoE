@@ -9,6 +9,7 @@ Runs a single-step train (optionally) and reports:
 - teacher device placement
 - optimizer param groups / LR
 - in-memory weight deltas
+- eval metric delta (optional)
 - saved-vs-in-memory deltas (optional)
 """
 
@@ -160,6 +161,11 @@ def main() -> None:
     ap.add_argument("--output", default="/tmp/diag_full")
     ap.add_argument("--param", default="model.layers.0.self_attn.W_A_q.weight")
     ap.add_argument("--steps", type=int, default=1)
+    ap.add_argument(
+        "--eval",
+        action="store_true",
+        help="Compute eval_distill metrics before/after the step(s) to verify eval reacts to weight updates.",
+    )
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--save-dir", default="/tmp/diag_full_saved")
     ap.add_argument("--disable-wandb", action="store_true")
@@ -245,6 +251,13 @@ def main() -> None:
         processing_class=None if cfg.dataset.prepacked else tokenizer,
     )
 
+    metrics_before: dict[str, float] | None = None
+    if args.eval:
+        _print("== eval (before) ==")
+        metrics_before = trainer.evaluate_distill_subset()
+        for k in sorted(metrics_before.keys()):
+            _print(f"{k}: {metrics_before[k]:.10f}")
+
     named = dict(trainer.model.named_parameters())
     if args.param not in named:
         raise SystemExit(f"Param not found: {args.param}")
@@ -261,6 +274,19 @@ def main() -> None:
         any(p is q for g in trainer.optimizer.param_groups for q in g["params"]),
     )
     _print("lr groups:", [g["lr"] for g in trainer.optimizer.param_groups[:2]])
+
+    if args.eval:
+        _print("== eval (after) ==")
+        metrics_after = trainer.evaluate_distill_subset()
+        for k in sorted(metrics_after.keys()):
+            _print(f"{k}: {metrics_after[k]:.10f}")
+        if metrics_before is not None:
+            _print("== eval (delta) ==")
+            keys = sorted(set(metrics_before.keys()) | set(metrics_after.keys()))
+            for k in keys:
+                b = metrics_before.get(k, float("nan"))
+                a = metrics_after.get(k, float("nan"))
+                _print(f"{k}: {a - b:+.10f}")
 
     if args.save and _is_rank0():
         os.makedirs(args.save_dir, exist_ok=True)

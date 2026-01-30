@@ -1,0 +1,81 @@
+project_name: vpmoe-overfit-1example-s256-ce-kl
+model: veerpareek/vpmoe-20b-init
+trust_remote_code: true
+
+# Must-pass "KD path works" check: overfit a single example with CE+KL.
+sequence_length: 256
+use_flash_attention: true
+model_kwargs:
+  use_cache: false
+  use_kernels: false
+
+output_path: /data/distill_runs/overfit_1example_s256_ce_kl
+
+dataset:
+  train_dataset:
+    disk_path: /data/distillation_debug/overfit_1example
+    split: train
+  # Evaluate on the same example to measure memorization.
+  eval_dataset:
+    disk_path: /data/distillation_debug/overfit_1example
+    split: train
+  seed: 42
+  num_eval_samples: 1
+
+loss_functions:
+  - function: cross_entropy
+    weight: 0.5
+  - function: kl
+    weight: 0.5
+    temperature: 2.0
+
+teacher:
+  kind: hf
+  path: openai/gpt-oss-20b
+  kwargs:
+    attn_implementation: flash_attention_2
+    torch_dtype: bfloat16
+    use_cache: false
+    device_map: "cuda"
+
+training_args:
+  dataset_kwargs:
+    skip_prepare_dataset: true
+  packing: false
+  max_steps: 200
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 1
+
+  dataloader_num_workers: 0
+  dataloader_pin_memory: true
+  per_device_eval_batch_size: 1
+  eval_steps: 10
+  save_steps: 100
+  save_total_limit: 1
+  logging_steps: 1
+
+  # Keep this conservative: goal is "it learns", not throughput.
+  learning_rate: 5.0e-5
+  weight_decay: 0.0
+  warmup_ratio: 0.0
+  lr_scheduler_type: constant
+
+  bf16: true
+  tf32: true
+  max_grad_norm: 0.1
+  optim: adamw_torch
+  optim_args: "muon,lr=0.001,wd=0.0,update_scale=0.05,momentum=0.95,nesterov=true,ns_steps=5,adamw_lr=5e-5,adamw_wd=0.0"
+
+  gradient_checkpointing: true
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
+  report_to: none
+
+frozen_res:
+  - ^model\.embed_tokens
+  - ^lm_head
+  - ^model\.norm\.weight$
+  - ^model\.layers\.\d+\.input_layernorm\.weight$
+  - ^model\.layers\.\d+\.post_attention_layernorm\.weight$
+  - ^model\.layers\.\d+\.mlp\.
+
