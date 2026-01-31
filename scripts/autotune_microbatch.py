@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import yaml
@@ -28,9 +29,38 @@ class TrialResult:
     output_tail: str
 
 
-def _run(cmd: list[str], *, env: dict[str, str]) -> tuple[int, str]:
-    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
-    return p.returncode, p.stdout
+def _run_streaming(
+    cmd: list[str],
+    *,
+    env: dict[str, str],
+    tail_lines: int = 2000,
+) -> tuple[int, str, bool]:
+    """
+    Run a command while streaming its combined stdout/stderr to our stdout.
+
+    Returns (returncode, output_tail, saw_oom).
+    """
+    p = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        bufsize=1,
+    )
+    assert p.stdout is not None
+
+    tail = deque(maxlen=tail_lines)
+    saw_oom = False
+    for line in p.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        tail.append(line.rstrip("\n"))
+        if _OOM_RE.search(line):
+            saw_oom = True
+
+    rc = p.wait()
+    return rc, "\n".join(tail), saw_oom
 
 
 def _ensure_tiny_dataset(
@@ -60,9 +90,10 @@ def _ensure_tiny_dataset(
         str(sequence_length),
     ]
     print("creating tiny dataset:", " ".join(cmd), flush=True)
-    rc, out = _run(cmd, env=env)
+    rc, out_tail, _ = _run_streaming(cmd, env=env)
     if rc != 0:
-        print(out, file=sys.stderr)
+        # Full output already streamed; print tail for convenience.
+        print(out_tail, file=sys.stderr)
         raise SystemExit(rc)
 
 
@@ -105,7 +136,6 @@ def _make_probe_config(
 
     # Avoid writing checkpoints during the probe.
     ta["save_strategy"] = "no"
-    ta["evaluation_strategy"] = "no"
     ta["eval_steps"] = 0
 
     # Keep LR schedule out of the picture for a memory probe.
@@ -160,15 +190,26 @@ def _trial(
     ]
     print("probe:", " ".join(cmd), flush=True)
     t0 = time.time()
-    rc, out = _run(cmd, env=env)
+    rc, out_tail, saw_oom = _run_streaming(cmd, env=env)
     dt = time.time() - t0
 
     if rc == 0:
-        return TrialResult(per_device_train_batch_size=per_device_train_batch_size, ok=True, wall_s=dt, output_tail=_tail(out))
-    if _OOM_RE.search(out):
-        return TrialResult(per_device_train_batch_size=per_device_train_batch_size, ok=False, wall_s=dt, output_tail=_tail(out))
+        return TrialResult(
+            per_device_train_batch_size=per_device_train_batch_size,
+            ok=True,
+            wall_s=dt,
+            output_tail=_tail(out_tail),
+        )
+    if saw_oom:
+        return TrialResult(
+            per_device_train_batch_size=per_device_train_batch_size,
+            ok=False,
+            wall_s=dt,
+            output_tail=_tail(out_tail),
+        )
     # Non-OOM failure: surface output.
-    print(out, file=sys.stderr, flush=True)
+    # Full output already streamed; print tail for convenience.
+    print(out_tail, file=sys.stderr, flush=True)
     raise SystemExit(rc)
 
 
@@ -254,4 +295,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

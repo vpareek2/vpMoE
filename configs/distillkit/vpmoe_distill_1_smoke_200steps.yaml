@@ -1,4 +1,4 @@
-project_name: vpmoe-stage1-4k-gbs256
+project_name: vpmoe-stage1-4k-gbs256-smoke200
 model: veerpareek/vpmoe-20b-init
 trust_remote_code: true
 model_kwargs:
@@ -13,7 +13,7 @@ frozen_res: # regex param names for frozen weights
     - ^model\.layers\.\d+\.post_attention_layernorm\.weight$
     - ^model\.layers\.\d+\.mlp\.
 
-output_path: /data/distill_runs/vpmoe_stage1_4k_gbs256
+output_path: /data/distill_runs/vpmoe_stage1_4k_gbs256_smoke200
 use_flash_attention: true
 sequence_length: 4096
 resize_embeddings_to_multiple_of: 201088
@@ -25,7 +25,7 @@ dataset:
     eval_dataset:
         disk_path: /data/distillation_1/phase1_mix_4k_665m
         split: validation
-    seed: 12
+    seed: 42
     num_eval_samples: 64
 
 loss_functions:
@@ -52,6 +52,8 @@ training_args:
         skip_prepare_dataset: true
     packing: false
     num_train_epochs: 1
+    max_steps: 200
+
     per_device_train_batch_size: 1
     # 8 GPUs * microbatch 1 * grad_accum 32 = global batch 256
     gradient_accumulation_steps: 32
@@ -60,11 +62,10 @@ training_args:
     dataloader_pin_memory: true
     dataloader_persistent_workers: true
     dataloader_drop_last: true
-    # Conservative cadence so we get signal early in a "one-shot" run.
     eval_steps: 100
     per_device_eval_batch_size: 1
-    save_steps: 200
-    save_total_limit: 3
+    save_steps: 100
+    save_total_limit: 2
     logging_steps: 1
     remove_unused_columns: false
 
