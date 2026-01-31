@@ -1,4 +1,4 @@
-project_name: vpmoe-stage1-4k-gbs256
+project_name: vpmoe-stage1-distill
 model: veerpareek/vpmoe-20b-init
 trust_remote_code: true
 model_kwargs:
